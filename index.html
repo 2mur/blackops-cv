@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CLASSIFIED DOSSIER // ZHANABAEV</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</head>
+<body>
+    <div class="paper-container">
+        <header>
+            <div class="seal-placeholder">(CIA LOGO)</div>
+            <div class="header-text">
+                <h1>CENTRAL INTELLIGENCE AGENCY</h1>
+                <p class="sub-agency">(SECDEF &nbsp;&nbsp;&nbsp; JCS &nbsp;&nbsp;&nbsp; ARMY &nbsp;&nbsp;&nbsp; NAVY)</p>
+            </div>
+            <div class="case-number">
+                <span class="stamp angled-right">CASE: 143</span>
+            </div>
+        </header>
+
+        <div class="dossier-grid">
+            <div class="grid-row">
+                <div class="cell" style="flex: 2;">
+                    <span class="field-label">FIRST NAME</span>
+                    <span class="field-value">TIMUR</span>
+                </div>
+                <div class="cell" style="flex: 2;">
+                    <span class="field-label">LAST NAME</span>
+                    <span class="field-value">ZHANABAEV</span>
+                </div>
+                <div class="cell" style="flex: 1;">
+                    <span class="field-label">ALIAS</span>
+                    <span class="field-value">2MUR</span>
+                </div>
+            </div>
+
+            <div class="grid-row">
+                <div class="cell" style="flex: 2;">
+                    <span class="field-label">BASE OF OPERATIONS</span>
+                    <span class="field-value">MONTREAL, QC</span>
+                </div>
+                <div class="cell" style="flex: 2;">
+                    <span class="field-label">COMMS INTERCEPT</span>
+                    <span class="field-value">438-367-8738 <br> zhanab.timur@gmail.com</span>
+                </div>
+                <div class="cell" style="flex: 1;">
+                    <span class="field-label">CLEARANCE</span>
+                    <span class="stamp angled-left">CLASSIFIED</span>
+                </div>
+            </div>
+
+            <div class="grid-row">
+                <div class="cell" style="flex: 3;">
+                    <span class="field-label">OCCUPATION</span>
+                    <span class="field-value">DATA SCIENTIST / BIO-INFORMATICIAN</span>
+                </div>
+                <div class="cell" style="flex: 2;">
+                    <span class="field-label">LANGUAGES</span>
+                    <span class="field-value">ENG / FRA / RUS</span>
+                </div>
+            </div>
+
+            <div class="grid-row content-row">
+                <div class="cell" style="flex: 1; border-right: none;">
+                    <span class="field-label">BACKGROUND INTEL</span>
+                    
+                    <button id="lang-toggle" onclick="toggleLanguage()">[ DECRYPT: FRANÇAIS ]</button>
+
+                    <div class="lang-en active-lang">
+                        <p>Academic profile indicates extensive implementation of mathematical models and rapid adaptation to operational environments. Holds an MSc in Mathematics and BSc in Physics from Concordia University. </p>
+                        <p>Field experience includes pipeline architecture at Phyla Technologies Inc., utilizing <span class="redacted">pandas, scikit-learn, and tensorflow</span> on cloud infrastructure (AWS/GCP).</p>
+                        <p>Subject exhibits high proficiency in generative models and data visualization. Further capabilities require <span class="stamp angled-right">REQUIRED</span> review.</p>
+                    </div>
+
+                    <div class="lang-fr hidden-lang">
+                        <p>Le profil académique indique une implémentation approfondie de modèles mathématiques et une adaptation rapide aux environnements opérationnels. Détient une maîtrise en mathématiques et un baccalauréat en physique de l'Université Concordia.</p>
+                        <p>L'expérience sur le terrain inclut l'architecture de pipelines chez Phyla Technologies Inc., utilisant <span class="redacted">pandas, scikit-learn, et tensorflow</span> sur une infrastructure cloud (AWS/GCP).</p>
+                        <p>Le sujet démontre une grande compétence dans les modèles génératifs et la visualisation de données. Les capacités supplémentaires nécessitent un examen <span class="stamp angled-right">REQUIS</span>.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <section id="intel-folders">
+            <span class="field-label" style="margin-left: 5px;">SUPPLEMENTAL INTEL FILES</span>
+            <div class="tab-system">
+                <button class="tab-btn active" onclick="loadIntel('project1.md', this)">EVM_LAKEHOUSE.md</button>
+                <button class="tab-btn" onclick="loadIntel('project2.md', this)">BLOCKCHAIN_VIS.md</button>
+            </div>
+            <div id="intel-display" class="typewriter-output">
+                ( SELECT FOLDER TO LOAD CONTENTS )
+            </div>
+        </section>
+    </div>
+    <script src="script.js"></script>
+</body>
+</html>
