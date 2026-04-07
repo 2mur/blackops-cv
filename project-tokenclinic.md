@@ -1,8 +1,7 @@
-### > DECLASSIFIED: OPERATION AVALANCHE_ETL
+### > PROJECT: AVALANCHE TOKENS ETL
 
-**STATUS:** ACTIVE DEPLOYMENT
-**TARGET:** AVALANCHE C-CHAIN
-**OBJECTIVE:** Automated ingestion, transformation, and reporting of normal network transactions.
+**DATA:** AVALANCHE C-CHAIN TOKEN TXS
+**DESC:** Automated ingestion, transformation, and reporting of normal network transactions.
 
 #### [ SYSTEM ARCHITECTURE ]
 A serverless, containerized pipeline engineered on Google Cloud Platform for high-reliability batch processing.
@@ -14,7 +13,7 @@ A serverless, containerized pipeline engineered on Google Cloud Platform for hig
   * `process.py` & `users.py`: Cleanses payloads and maps user behavioral clusters.
   * `report.py`: Generates formatted HTML analytics files for strategic review.
 
-#### [ FIELD CAPABILITIES ]
+#### [ FEATURES ]
 * Zero-maintenance serverless execution.
 * Automated HTML report generation for non-technical operatives.
 * Modular codebase allowing rapid deployment of new analytical models.

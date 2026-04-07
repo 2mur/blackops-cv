@@ -4,8 +4,8 @@ dist/
 .env
 assets/sop/data/features.json
 assets/sop/data/users.json
-assets/sop/data/simulation/cnn1d_simulation_4834833.json
 assets/sop/data/simulation/cnn1d_simulation_rankings_4834833.json
+assets/sop/data/simulation/cnn1d_simulation_4834833.json
 assets/sop/data/simulation/transformer_simulation_4834833.json
 assets/sop/data/simulation/transformer_simulation_rankings_4834833.json
 assets/sop/data/simulation/rl_simulation_4834833.json

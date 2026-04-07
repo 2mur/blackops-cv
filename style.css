@@ -145,11 +145,11 @@ header {
 
 .theme-btn {
     cursor: pointer;
-    margin-top: 8px;
     font-weight: bold;
     background: transparent;
+    white-space: nowrap; /* Prevents the text from wrapping on smaller screens */
+    margin-bottom: 2px; /* Aligns baseline with the H1 text */
 }
-
 /* Dense Data Grid */
 .dossier-grid {
     border: 1px solid var(--grid-line);

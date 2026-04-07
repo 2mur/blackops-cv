@@ -1,8 +1,7 @@
-### > DECLASSIFIED: OPERATION MONTREAL_GIS
+### > PROJECT: MONTREAL AIR QUALITY
 
-**STATUS:** ACTIVE DEPLOYMENT
-**TARGET:** MONTREAL METROPOLITAN SECTOR
-**OBJECTIVE:** Geospatial ingestion, transformation, and anomaly detection of atmospheric pollutants and methane levels.
+**DATA:** MONTREAL METROPOLITAN SATELITE AND GROUND BASED AIR POLLUTANTS
+**DESC:** Geospatial ingestion, transformation, and anomaly detection of atmospheric pollutants and methane levels.
 
 #### [ SYSTEM ARCHITECTURE ]
 A containerized spatial data pipeline engineered to process environmental telemetry and isolate localized atmospheric anomalies.
@@ -12,7 +11,7 @@ A containerized spatial data pipeline engineered to process environmental teleme
 * **MACHINE LEARNING:** Python scripts systematically train anomaly detection models to flag irregular environmental events.
 * **INFRASTRUCTURE:** The entire environment is containerized using Docker and `docker-compose`, configured for immediate deployment to cloud infrastructure such as GCP Compute Engine or Cloud Run.
 
-#### [ FIELD CAPABILITIES ]
+#### [ FEATURES ]
 * Automated extraction and spatial processing of coordinate-based sensor data.
 * Algorithmic identification of methane and critical pollutant spikes.
 * Generation of visual map artifacts for rapid strategic review.

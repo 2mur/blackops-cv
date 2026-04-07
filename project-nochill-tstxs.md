@@ -1,4 +1,4 @@
-### > DECLASSIFIED: OPERATION BLOCKCHAIN_VIS
+### > PROJECT: BLOCKCHAIN TRANSFER GRAPH
 
 **STATUS:** ACTIVE DEPLOYMENT
 **TARGET:** DECENTRALIZED NETWORKS
@@ -11,7 +11,7 @@ A tactical visualization dashboard engineered to expose covert network flows, to
 * **ANALYTICS:** Integrates mathematical models to cluster wallet addresses and identify high-value transfer nodes.
 * **DEPLOYMENT:** Staged for high-availability access, allowing real-time streaming of intercepted cryptocurrency analytics.
 
-#### [ FIELD CAPABILITIES ]
+#### [ FEATURES ]
 * Graphical representation of node-to-node transaction networks.
 * Isolation of anomalous transfer patterns to detect automated bot network activity.
 * Interactive UI to filter historical ledgers by timestamp and threat level.
