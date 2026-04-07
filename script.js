@@ -1,41 +1,56 @@
 let currentLang = 'en';
 
-function toggleLanguage() {
-    const enContent = document.querySelector('.lang-en');
-    const frContent = document.querySelector('.lang-fr');
-    const toggleBtn = document.getElementById('lang-toggle');
+// Keep the existing toggleLanguage() function at the top...
+// Theme Toggle Logic
+function toggleTheme() {
+    const body = document.body;
+    const toggleBtn = document.getElementById('theme-toggle');
 
-    if (currentLang === 'en') {
-        enContent.classList.remove('active-lang');
-        enContent.classList.add('hidden-lang');
-        frContent.classList.remove('hidden-lang');
-        frContent.classList.add('active-lang');
-        toggleBtn.innerText = '[ DECRYPT: ENGLISH ]';
-        currentLang = 'fr';
+    if (body.classList.contains('theme-beige')) {
+        body.classList.remove('theme-beige');
+        toggleBtn.innerText = '[ LIGHT MODE ]';
     } else {
-        frContent.classList.remove('active-lang');
-        frContent.classList.add('hidden-lang');
-        enContent.classList.remove('hidden-lang');
-        enContent.classList.add('active-lang');
-        toggleBtn.innerText = '[ DECRYPT: FRANÇAIS ]';
-        currentLang = 'en';
+        body.classList.add('theme-beige');
+        toggleBtn.innerText = '[ DARK MODE ]';
     }
 }
 
-async function loadIntel(filename, btnElement) {
-    const displayArea = document.getElementById('intel-display');
-    
-    document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
-    btnElement.classList.add('active');
+// New Card Logic
+async function toggleCard(cardElement, filename) {
+    const isExpanded = cardElement.classList.contains('expanded');
+    const detailsContainer = cardElement.querySelector('.card-details');
+    const githubLink = cardElement.querySelector('.github-link');
+    const markdownDisplay = cardElement.querySelector('.markdown-content');
 
-    displayArea.innerHTML = 'RETRIEVING FILE FROM ARCHIVE...';
+    // If already expanded, collapse it
+    if (isExpanded) {
+        cardElement.classList.remove('expanded');
+        detailsContainer.classList.add('hidden');
+        githubLink.classList.add('hidden');
+        return;
+    }
+
+    // Collapse all other cards first to maintain layout grid
+    document.querySelectorAll('.intel-card').forEach(card => {
+        card.classList.remove('expanded');
+        card.querySelector('.card-details').classList.add('hidden');
+        card.querySelector('.github-link').classList.add('hidden');
+    });
+
+    // Expand the clicked card
+    cardElement.classList.add('expanded');
+    detailsContainer.classList.remove('hidden');
+    githubLink.classList.remove('hidden');
+
+    // Fetch and decrypt the markdown file
+    markdownDisplay.innerHTML = '( CONNECTING... )';
 
     try {
         const response = await fetch(filename);
         if (!response.ok) throw new Error('File not found.');
         const markdown = await response.text();
-        displayArea.innerHTML = marked.parse(markdown);
+        markdownDisplay.innerHTML = marked.parse(markdown);
     } catch (error) {
-        displayArea.innerHTML = `<span class="stamp angled-left">FILE MISSING</span><br><br>ERROR: INTEL ${filename} NOT FOUND IN CURRENT DIRECTORY.`;
+        markdownDisplay.innerHTML = `<span class="stamp angled-left">FILE 404</span><br><br>ERROR: ${filename} NOT FOUND IN DIRECTORY.`;
     }
 }

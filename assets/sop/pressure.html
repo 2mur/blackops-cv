@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SOP: 24H RESIDUAL DASHBOARD</title>
+    
+    <script type="importmap">
+    {
+        "imports": {
+            "react": "https://esm.sh/react@18.2.0",
+            "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+            "recharts": "https://esm.sh/recharts@2.12.2?deps=react@18.2.0,react-dom@18.2.0"
+        }
+    }
+    </script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <style>
+        body { background-color: #1e2418; color: #a4b596; margin: 0; overflow-x: hidden; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+        .scanlines { background: linear-gradient(to bottom, rgba(255,255,255,0), rgba(255,255,255,0) 50%, rgba(0,0,0,0.15) 50%, rgba(0,0,0,0.15)); background-size: 100% 4px; pointer-events: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 50; }
+        .crt-flicker { animation: flicker 0.15s infinite; }
+        @keyframes flicker { 0% { opacity: 0.95; } 50% { opacity: 1; } 100% { opacity: 0.98; } }
+        .glow-box { box-shadow: inset 0 0 20px rgba(164, 181, 150, 0.03); background: rgba(20, 24, 16, 0.4); backdrop-filter: blur(4px); }
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: rgba(58, 69, 49, 0.1); border-left: 1px solid rgba(164, 181, 150, 0.1); }
+        ::-webkit-scrollbar-thumb { background: rgba(164, 181, 150, 0.3); }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(164, 181, 150, 0.5); }
+    </style>
+</head>
+<body>
+    <div class="scanlines"></div>
+    <div id="root"></div>
+
+    <script type="text/babel" data-type="module">
+        import React, { useState, useEffect, useMemo } from 'react';
+        import { createRoot } from 'react-dom/client';
+        import { 
+            ComposedChart, Line, XAxis, YAxis, Tooltip, 
+            ResponsiveContainer, CartesianGrid, Area, Bar, Cell, Legend
+        } from 'recharts';
+
+        const DUNE_ID = '4834833';
+
+        const formatMill = (val) => `${(val / 1000000).toFixed(1)}M`;
+        const formatK = (val) => `${(val / 1000).toFixed(0)}k`;
+
+        const App = () => {
+            const [data, setData] = useState([]);
+            const [loading, setLoading] = useState(true);
+            const [priceMode, setPriceMode] = useState('usd');
+            const [isLogScale, setIsLogScale] = useState(false);
+            const [hiddenSeries, setHiddenSeries] = useState({});
+
+            useEffect(() => {
+                fetch(`data/network_pressure.json`)
+                    .then(res => res.json())
+                    .then(json => {
+                        const rowData = json.time.map((t, i) => {
+                            let row = {};
+                            for (let key in json) { 
+                                // Enforce minimum value of 0.1 for log scale compatibility on specific series
+                                let val = json[key][i];
+                                if (['cum_bought', 'cum_sold', 'active_holders', 'avg_t_1st_sell', 'avg_t_exit'].includes(key) && val <= 0) {
+                                    val = 0.1; 
+                                }
+                                row[key] = val; 
+                            }
+                            return row;
+                        });
+                        setData(rowData);
+                        setLoading(false);
+                    })
+                    .catch(err => {
+                        console.error(err);
+                        setLoading(false);
+                    });
+            }, []);
+
+            if (loading) return <div className="h-screen flex items-center justify-center tracking-widest animate-pulse text-[#60a5fa]">COMPILING 24H RESIDUAL GRIDS...</div>;
+            if (data.length === 0) return <div className="h-screen flex items-center justify-center text-red-500">FAILED TO LOAD RESIDUAL VECTORS</div>;
+
+            const activePriceKey = priceMode === 'usd' ? 'price' : 'price_native';
+            const activePriceColor = priceMode === 'usd' ? '#facc15' : '#d1d5db';
+            const sym = priceMode === 'usd' ? '$' : 'A ';
+            
+            const scaleType = isLogScale ? 'log' : 'auto';
+            const domainType = isLogScale ? [0.1, 'auto'] : ['auto', 'auto'];
+
+            const toggleSeries = (dataKey) => {
+                setHiddenSeries(prev => ({
+                    ...prev,
+                    [dataKey]: !prev[dataKey]
+                }));
+            };
+
+            const renderCustomLegend = (props) => {
+                const { payload } = props;
+                return (
+                    <ul className="flex flex-wrap justify-center gap-3 text-[9px] mb-2">
+                        {payload.map((entry, index) => (
+                            <li key={`item-${index}`}
+                                className={`cursor-pointer transition-opacity flex items-center ${hiddenSeries[entry.dataKey] ? 'opacity-30 line-through' : 'opacity-100 hover:opacity-80'}`}
+                                onClick={() => toggleSeries(entry.dataKey)}
+                                style={{ color: entry.color }}
+                            >
+                                <span className="inline-block w-2 h-2 mr-1 rounded-sm" style={{ backgroundColor: entry.color }}></span>
+                                {entry.value}
+                            </li>
+                        ))}
+                    </ul>
+                );
+            };
+
+            const GridTooltip = ({ active, payload, label, showPrice = false }) => {
+                if (active && payload && payload.length) {
+                    const priceData = payload.find(p => p.dataKey === activePriceKey);
+                    return (
+                        <div className="bg-[#141810]/95 border border-[#a4b596]/50 p-2 text-[10px] shadow-xl z-50 min-w-[150px] backdrop-blur-md">
+                            <p className="text-[#d1e0c5] border-b border-[#a4b596]/30 pb-1 mb-1 font-bold">{label}</p>
+                            {showPrice && priceData && (
+                                <div className="flex justify-between items-center mb-1">
+                                    <span className="opacity-70">PRICE:</span>
+                                    <span style={{color: activePriceColor}}>{sym}{priceData.value.toFixed(6)}</span>
+                                </div>
+                            )}
+                            {payload.map((entry, idx) => {
+                                if (entry.dataKey === activePriceKey || hiddenSeries[entry.dataKey]) return null;
+                                let val = entry.value;
+                                if (Math.abs(val) > 1000000) val = formatMill(val);
+                                else if (Math.abs(val) > 1000) val = formatK(val);
+                                else val = val.toFixed(1);
+                                
+                                return (
+                                    <div key={idx} className="flex justify-between items-center mt-0.5">
+                                        <span style={{color: entry.color}} className="opacity-80 uppercase">{entry.name}:</span>
+                                        <span className="font-mono text-white ml-3">{val}</span>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    );
+                }
+                return null;
+            };
+
+            return (
+                <div className="h-screen flex flex-col p-4 bg-[#1e2418] text-[#a4b596] crt-flicker relative z-10 gap-3 overflow-hidden">
+                    
+                    {/* HEADER */}
+                    <header className="flex flex-wrap justify-between items-end border-b border-[#a4b596]/30 pb-2 shrink-0 gap-4">
+                        <div>
+                            <h1 className="text-xl font-bold tracking-widest text-[#d1e0c5] drop-shadow-md">NETWORK RESIDUALS (24H FORECAST vs ACTUAL)</h1>
+                            <p className="text-[10px] opacity-70 tracking-widest mt-1">GRID TIME-SERIES ANALYSIS OF PREDICTIVE VARIANCES</p>
+                        </div>
+                        
+                        <div className="flex gap-4">
+                            <div className="flex bg-[#141810] border border-[#a4b596]/30">
+                                <button onClick={() => setPriceMode('usd')} className={`px-3 py-1 text-[10px] font-bold uppercase transition-colors ${priceMode === 'usd' ? 'bg-[#a4b596] text-[#1e2418]' : 'text-[#a4b596] hover:bg-[#3a4531]'}`}>USD</button>
+                                <button onClick={() => setPriceMode('native')} className={`px-3 py-1 text-[10px] font-bold uppercase transition-colors ${priceMode === 'native' ? 'bg-[#a4b596] text-[#1e2418]' : 'text-[#a4b596] hover:bg-[#3a4531]'}`}>NATIVE</button>
+                            </div>
+                            
+                            <div className="flex bg-[#141810] border border-[#a4b596]/30">
+                                <button onClick={() => setIsLogScale(!isLogScale)} className={`px-3 py-1 text-[10px] font-bold uppercase transition-colors ${isLogScale ? 'bg-[#a4b596] text-[#1e2418]' : 'text-[#a4b596] hover:bg-[#3a4531]'}`}>
+                                    LOG SCALE {isLogScale ? 'ON' : 'OFF'}
+                                </button>
+                            </div>
+                        </div>
+                    </header>
+
+                    {/* DASHBOARD GRID */}
+                    <div className="flex-1 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 overflow-y-auto pr-1 pb-4">
+                        
+                        {/* CHART 1: BUY FORECAST vs ACTUAL */}
+                        <div className="border border-[#a4b596]/30 bg-[#141810] p-2 flex flex-col glow-box min-h-[250px]">
+                            <h2 className="text-[10px] font-bold text-[#d1e0c5] border-b border-[#a4b596]/20 pb-1 mb-2">1. BUY PRESSURE (ACTUAL VS FORECAST)</h2>
+                            <ResponsiveContainer width="100%" height="100%">
+                                <ComposedChart data={data} margin={{top: 5}}>
+                                    <CartesianGrid strokeDasharray="2 4" stroke="#a4b596" opacity={0.1} vertical={false} />
+                                    <XAxis dataKey="time" hide />
+                                    <YAxis tickFormatter={formatMill} tick={{ fontSize: 9, fill: '#a4b596' }} axisLine={false} tickLine={false} width={45} />
+                                    <Tooltip content={<GridTooltip />} cursor={{ fill: '#a4b596', opacity: 0.1 }} />
+                                    <Legend content={renderCustomLegend} verticalAlign="top" />
+                                    <Area hide={hiddenSeries["exp_buys"]} type="step" dataKey="exp_buys" name="Forecast Buys" stroke="#3b82f6" fill="#3b82f6" fillOpacity={0.1} strokeWidth={1} isAnimationActive={false} />
+                                    <Line hide={hiddenSeries["act_buys"]} type="monotone" dataKey="act_buys" name="Actual Buys" stroke="#10b981" strokeWidth={1.5} dot={false} isAnimationActive={false} />
+                                    <Bar hide={hiddenSeries["res_buys"]} dataKey="res_buys" name="Residual (Act - Exp)">
+                                        {data.map((entry, index) => ( <Cell key={`cell-${index}`} fill={entry.res_buys > 0 ? '#10b981' : '#ef4444'} opacity={0.6} /> ))}
+                                    </Bar>
+                                </ComposedChart>
+                            </ResponsiveContainer>
+                        </div>
+
+                        {/* CHART 2: SELL FORECAST vs ACTUAL */}
+                        <div className="border border-[#a4b596]/30 bg-[#141810] p-2 flex flex-col glow-box min-h-[250px]">
+                            <h2 className="text-[10px] font-bold text-[#d1e0c5] border-b border-[#a4b596]/20 pb-1 mb-2">2. SELL PRESSURE (ACTUAL VS FORECAST)</h2>
+                            <ResponsiveContainer width="100%" height="100%">
+                                <ComposedChart data={data} margin={{top: 5}}>
+                                    <CartesianGrid strokeDasharray="2 4" stroke="#a4b596" opacity={0.1} vertical={false} />
+                                    <XAxis dataKey="time" hide />
+                                    <YAxis tickFormatter={formatMill} tick={{ fontSize: 9, fill: '#a4b596' }} axisLine={false} tickLine={false} width={45} />
+                                    <Tooltip content={<GridTooltip />} cursor={{ fill: '#a4b596', opacity: 0.1 }} />
+                                    <Legend content={renderCustomLegend} verticalAlign="top" />
+                                    <Area hide={hiddenSeries["exp_sells"]} type="step" dataKey="exp_sells" name="Forecast Sells" stroke="#f59e0b" fill="#f59e0b" fillOpacity={0.1} strokeWidth={1} isAnimationActive={false} />
+                                    <Line hide={hiddenSeries["act_sells"]} type="monotone" dataKey="act_sells" name="Actual Sells" stroke="#ef4444" strokeWidth={1.5} dot={false} isAnimationActive={false} />
+                                    <Bar hide={hiddenSeries["res_sells"]} dataKey="res_sells" name="Residual (Act - Exp)">
+                                        {data.map((entry, index) => ( <Cell key={`cell-${index}`} fill={entry.res_sells > 0 ? '#ef4444' : '#10b981'} opacity={0.6} /> ))}
+                                    </Bar>
+                                </ComposedChart>
+                            </ResponsiveContainer>
+                        </div>
+
+                        {/* CHART 3: NET FLOW RESIDUALS */}
+                        <div className="border border-[#a4b596]/30 bg-[#141810] p-2 flex flex-col glow-box min-h-[250px]">
+                            <h2 className="text-[10px] font-bold text-[#d1e0c5] border-b border-[#a4b596]/20 pb-1 mb-2">3. NET FLOW RESIDUALS</h2>
+                            <ResponsiveContainer width="100%" height="100%">
+                                <ComposedChart data={data} margin={{top: 5}}>
+                                    <CartesianGrid strokeDasharray="2 4" stroke="#a4b596" opacity={0.1} vertical={false} />
+                                    <XAxis dataKey="time" hide />
+                                    <YAxis tickFormatter={formatMill} tick={{ fontSize: 9, fill: '#a4b596' }} axisLine={false} tickLine={false} width={45} />
+                                    <Tooltip content={<GridTooltip />} cursor={{ fill: '#a4b596', opacity: 0.1 }} />
+                                    <Legend content={renderCustomLegend} verticalAlign="top" />
+                                    <Line hide={hiddenSeries["act_net"]} type="monotone" dataKey="act_net" name="Actual Net Flow" stroke="#60a5fa" strokeWidth={1.5} dot={false} isAnimationActive={false} />
+                                    <Line hide={hiddenSeries["exp_net"]} type="step" dataKey="exp_net" name="Forecast Net Flow" stroke="#a4b596" strokeWidth={1} strokeDasharray="4 4" dot={false} isAnimationActive={false} />
+                                    <Bar hide={hiddenSeries["res_net"]} dataKey="res_net" name="Net Residual">
+                                        {data.map((entry, index) => ( <Cell key={`cell-${index}`} fill={entry.res_net > 0 ? '#60a5fa' : '#b56a6a'} opacity={0.5} /> ))}
+                                    </Bar>
+                                </ComposedChart>
+                            </ResponsiveContainer>
+                        </div>
+
+                        {/* CHART 4: NETWORK SUPPLY METRICS */}
+                        <div className="border border-[#a4b596]/30 bg-[#141810] p-2 flex flex-col glow-box min-h-[250px]">
+                            <h2 className="text-[10px] font-bold text-[#d1e0c5] border-b border-[#a4b596]/20 pb-1 mb-2">4. CUMULATIVE NETWORK FLOWS & PRICE</h2>
+                            <ResponsiveContainer width="100%" height="100%">
+                                <ComposedChart data={data} margin={{top: 5}}>
+                                    <CartesianGrid strokeDasharray="2 4" stroke="#a4b596" opacity={0.1} vertical={false} />
+                                    <XAxis dataKey="time" hide />
+                                    <YAxis yAxisId="left" scale={scaleType} domain={domainType} tickFormatter={formatMill} tick={{ fontSize: 9, fill: '#a4b596' }} axisLine={false} tickLine={false} width={45} />
+                                    <YAxis yAxisId="right" orientation="right" scale={scaleType} domain={domainType} tickFormatter={(v) => sym+v.toFixed(4)} tick={{ fontSize: 9, fill: activePriceColor }} axisLine={false} tickLine={false} width={55} />
+                                    <Tooltip content={<GridTooltip showPrice={true} />} cursor={{ stroke: '#a4b596', strokeDasharray: '3 3', opacity: 0.3 }} />
+                                    <Legend content={renderCustomLegend} verticalAlign="top" />
+                                    
+                                    <Area hide={hiddenSeries["cum_bought"]} yAxisId="left" type="monotone" dataKey="cum_bought" name="Cum. Bought" stroke="#10b981" fill="#10b981" fillOpacity={0.05} strokeWidth={1} isAnimationActive={false} />
+                                    <Area hide={hiddenSeries["cum_sold"]} yAxisId="left" type="monotone" dataKey="cum_sold" name="Cum. Sold" stroke="#ef4444" fill="#ef4444" fillOpacity={0.05} strokeWidth={1} isAnimationActive={false} />
+                                    <Line hide={hiddenSeries["net_tokens"]} yAxisId="left" type="monotone" dataKey="net_tokens" name="Net Held" stroke="#60a5fa" strokeWidth={1.5} dot={false} isAnimationActive={false} />
+                                    <Line hide={hiddenSeries[activePriceKey]} yAxisId="right" type="monotone" dataKey={activePriceKey} name="Price" stroke={activePriceColor} strokeWidth={1.5} strokeDasharray={priceMode === 'native' ? "4 4" : ""} dot={false} isAnimationActive={false} />
+                                </ComposedChart>
+                            </ResponsiveContainer>
+                        </div>
+
+                        {/* CHART 5: HAZARD RATE AVERAGES */}
+                        <div className="border border-[#a4b596]/30 bg-[#141810] p-2 flex flex-col glow-box min-h-[250px]">
+                            <h2 className="text-[10px] font-bold text-[#d1e0c5] border-b border-[#a4b596]/20 pb-1 mb-2">5. SURVIVAL METRICS (HOURS TO EVENT)</h2>
+                            <ResponsiveContainer width="100%" height="100%">
+                                <ComposedChart data={data} margin={{top: 5}}>
+                                    <CartesianGrid strokeDasharray="2 4" stroke="#a4b596" opacity={0.1} vertical={false} />
+                                    <XAxis dataKey="time" hide />
+                                    <YAxis scale={scaleType} domain={domainType} tickFormatter={(v) => v + 'h'} tick={{ fontSize: 9, fill: '#a4b596' }} axisLine={false} tickLine={false} width={45} />
+                                    <Tooltip content={<GridTooltip />} cursor={{ stroke: '#a4b596', strokeDasharray: '3 3', opacity: 0.3 }} />
+                                    <Legend content={renderCustomLegend} verticalAlign="top" />
+                                    
+                                    <Line hide={hiddenSeries["avg_t_1st_sell"]} type="monotone" dataKey="avg_t_1st_sell" name="Avg Hrs to 1st Sell" stroke="#b56a6a" strokeWidth={2} dot={false} isAnimationActive={false} />
+                                    <Line hide={hiddenSeries["avg_t_exit"]} type="monotone" dataKey="avg_t_exit" name="Avg Hrs to Full Exit" stroke="#a4b596" strokeWidth={2} dot={false} isAnimationActive={false} />
+                                </ComposedChart>
+                            </ResponsiveContainer>
+                        </div>
+
+                        {/* CHART 6: POPULATION DYNAMICS */}
+                        <div className="border border-[#a4b596]/30 bg-[#141810] p-2 flex flex-col glow-box min-h-[250px]">
+                            <h2 className="text-[10px] font-bold text-[#d1e0c5] border-b border-[#a4b596]/20 pb-1 mb-2">6. ACTIVE HOLDER POPULATION</h2>
+                            <ResponsiveContainer width="100%" height="100%">
+                                <ComposedChart data={data} margin={{top: 5}}>
+                                    <CartesianGrid strokeDasharray="2 4" stroke="#a4b596" opacity={0.1} vertical={false} />
+                                    <XAxis dataKey="time" hide />
+                                    <YAxis scale={scaleType} domain={domainType} tickFormatter={formatK} tick={{ fontSize: 9, fill: '#a4b596' }} axisLine={false} tickLine={false} width={45} />
+                                    <Tooltip content={<GridTooltip />} cursor={{ stroke: '#a4b596', strokeDasharray: '3 3', opacity: 0.3 }} />
+                                    <Legend content={renderCustomLegend} verticalAlign="top" />
+                                    <Area hide={hiddenSeries["active_holders"]} type="monotone" dataKey="active_holders" name="Active Holders" stroke="#c084fc" fill="#c084fc" fillOpacity={0.15} strokeWidth={2} isAnimationActive={false} />
+                                </ComposedChart>
+                            </ResponsiveContainer>
+                        </div>
+
+                    </div>
+                </div>
+            );
+        };
+
+        const root = createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>

@@ -1,0 +1,56 @@
+{
+    "top_consistent": [
+        {
+            "denom": "native",
+            "dataset_mode": "full",
+            "strategy_mode": 2,
+            "description": "ML + 3D Fast Gating",
+            "avg_pnl": 153.64,
+            "win_rate": 100.0
+        },
+        {
+            "denom": "native",
+            "dataset_mode": "full",
+            "strategy_mode": 3,
+            "description": "Conviction Scaling",
+            "avg_pnl": 151.59,
+            "win_rate": 100.0
+        },
+        {
+            "denom": "native",
+            "dataset_mode": "pca",
+            "strategy_mode": 5,
+            "description": "Battery Grid (Tranches + StopLoss)",
+            "avg_pnl": 125.06,
+            "win_rate": 100.0
+        },
+        {
+            "denom": "native",
+            "dataset_mode": "pca",
+            "strategy_mode": 3,
+            "description": "Conviction Scaling",
+            "avg_pnl": 119.76,
+            "win_rate": 100.0
+        },
+        {
+            "denom": "native",
+            "dataset_mode": "pca",
+            "strategy_mode": 2,
+            "description": "ML + 3D Fast Gating",
+            "avg_pnl": 114.4,
+            "win_rate": 100.0
+        }
+    ],
+    "best_per_denom": {
+        "usd": {
+            "dataset_mode": "full",
+            "strategy_mode": 7,
+            "pnl": 5.63
+        },
+        "native": {
+            "dataset_mode": "full",
+            "strategy_mode": 2,
+            "pnl": 153.64
+        }
+    }
+}

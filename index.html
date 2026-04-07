@@ -3,93 +3,184 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title> DOSSIER - TIMUR ZHANABAEV</title>
+    <title>DOSSIER - TIMUR ZHANABAEV</title>
     <link rel="stylesheet" href="style.css">
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 </head>
-<body>
-    <div class="paper-container">
+<body> 
+    <div class="interference-bg"></div>
+    
+    <div class="projector-container">
         <header>
             <div class="header-text">
-                <h1>CLASSIFIED DOSSIER </h1>
-                <p class="sub-agency">(MLOps &nbsp;&nbsp;&nbsp; DataOps &nbsp;&nbsp;&nbsp; WebDev)</p>
-            </div>
-            <div class="case-number">
-                <span class="stamp angled-right">CASE: 143</span>
+                <h1>DOSSIER</h1>
+                <p class="sub-agency">( MLOps &nbsp;&nbsp;&nbsp; DataOps &nbsp;&nbsp;&nbsp; WebDev )</p>
+                <button id="theme-toggle" class="github-link theme-btn" onclick="toggleTheme()">[ LIGHT MODE ]</button>
             </div>
         </header>
 
         <div class="dossier-grid">
             <div class="grid-row">
-                <div class="cell" style="flex: 2;">
-                    <span class="field-label">FIRST NAME</span>
-                    <span class="field-value">TIMUR</span>
-                </div>
-                <div class="cell" style="flex: 2;">
-                    <span class="field-label">LAST NAME</span>
-                    <span class="field-value">ZHANABAEV</span>
+                <div class="cell" style="flex: 1;">
+                    <span class="field-label">NAME</span>
+                    <span class="field-value">TIMUR ZHANABAEV</span>
                 </div>
                 <div class="cell" style="flex: 1;">
                     <span class="field-label">GITHUB</span>
                     <span class="field-value">github.com/2mur</span>
                 </div>
-            </div>
-
-            <div class="grid-row">
-                <div class="cell" style="flex: 2;">
-                    <span class="field-label">BASE OF OPERATIONS</span>
-                    <span class="field-value">MONTREAL, QC</span>
-                </div>
-                <div class="cell" style="flex: 2;">
-                    <span class="field-label">COMMS</span>
-                    <span class="field-value">438-367-8738 <br> zhanab.timur@gmail.com</span>
-                </div>
                 <div class="cell" style="flex: 1;">
-                    <span class="field-label">CLEARANCE</span>
-                    <span class="stamp angled-left">CLASSIFIED</span>
+                    <span class="field-label">EMAIL</span>
+                    <span class="field-value">zhanab.timur@gmail.com</span>
                 </div>
             </div>
 
             <div class="grid-row">
-                <div class="cell" style="flex: 3;">
-                    <span class="field-label">OCCUPATION</span>
-                    <span class="field-value">DATA SCIENTIST</span>
-                </div>
-                <div class="cell" style="flex: 2;">
-                    <span class="field-label">LANGUAGES</span>
-                    <span class="field-value">ENG / FRA / RUS</span>
+                <div class="cell" style="flex: 1; border-right: none;">
+                    <span class="field-label">TECHNICAL CAPABILITIES</span>
+                    <div class="skills-container">
+                        <div class="skill-category">
+                            <strong>[ LANGUAGES ]</strong> Python, R, SQL, JavaScript, C++
+                        </div>
+                        <div class="skill-category">
+                            <strong>[ DATAOPS & MLOps ]</strong> GCP (Cloud Run, Workflows), Docker, Dagster, dbt
+                        </div>
+                        <div class="skill-category">
+                            <strong>[ ML & AI ]</strong> Scikit-Learn, TensorFlow, GenAI, RAG, Pinecone, GLMs
+                        </div>
+                        <div class="skill-category">
+                            <strong>[ WEB & VIZ ]</strong> React.js, Vue, Streamlit, Plotly, D3.js
+                        </div>
+                    </div>
                 </div>
             </div>
 
             <div class="grid-row content-row">
                 <div class="cell" style="flex: 1; border-right: none;">
-                    <span class="field-label">BACKGROUND INTEL</span>
-                    
-                    <button id="lang-toggle" onclick="toggleLanguage()">[ DECRYPT: FRANÇAIS ]</button>
-
-                    <div class="lang-en active-lang">
-                        <p>Academic profile indicates extensive implementation of mathematical models and rapid adaptation to operational environments. Holds an MSc in Mathematics and BSc in Physics from Concordia University. </p>
-                        <p>Experience includes pipeline architecture at Phyla Technologies Inc., utilizing pandas, scikit-learn, and tensorflow on cloud infrastructure (AWS/GCP).</p>
-                        <p>Subject exhibits high proficiency in machine learning, statistical learning, generative models, blockchain analytics and data visualization.
-                    </div>
-
-                    <div class="lang-fr hidden-lang">
-                        <p>Le profil académique indique une implémentation approfondie de modèles mathématiques et une adaptation rapide aux environnements opérationnels. Détient une maîtrise en mathématiques et un baccalauréat en physique de l'Université Concordia.</p>
-                        <p>L'expérience sur le terrain inclut l'architecture de pipelines chez Phyla Technologies Inc., utilisant <span class="redacted">pandas, scikit-learn, et tensorflow</span> sur une infrastructure cloud (AWS/GCP).</p>
-                        <p>Le sujet démontre une grande compétence dans les modèles génératifs et la visualisation de données. Les capacités supplémentaires nécessitent un examen <span class="stamp angled-right">REQUIS</span>.</p>
+                    <span class="field-label">BACKGROUND</span>
+                    <div>
+                        <p>Adept at extensive implementation of mathematical models and rapid adaptation to operational environments.</p>
+                        <p>MSc in Mathematics and BSc in Physics from Concordia University.</p>
+                        <p>High proficiency in machine learning, statistical learning, generative models, blockchain analytics and data visualization.</p>
                     </div>
                 </div>
             </div>
         </div>
+        
+        <h1 class="section-title">PROJECTS (CLICK TO EXPAND)</h1>
+        
+        <section id="intel-cards-section">            
+            <div class="intel-grid">
+                <div class="intel-card" onclick="toggleCard(this, 'project-dune.md')">
+                    <div class="card-header">
+                        <div class="card-image-col">
+                            <img src="assets/noise.png" alt="Trading Terminal UI" class="intel-photo">
+                        </div>
+                        <div class="card-title-col">
+                            <h3 class="card-title">DEXTRADES Terminal</h3>
+                            <a href="https://github.com/2mur/" class="github-link hidden" target="_blank" onclick="event.stopPropagation()">[ VIEW REPOSITORY ]</a>
+                            <a href="assets/sop/sop-index.html" class="github-link hidden" target="_blank" onclick="event.stopPropagation()">[ VIEW MASTER TERMINAL ]</a>
+                        </div>
+                    </div>
+                    <div class="card-details hidden">
+                        <div class="markdown-content typewriter-output">
+                            ( LOADING PROJECT DETAILS... )
+                        </div>
+                    </div>
+                </div>
 
-        <section id="intel-folders">
-            <span class="field-label" style="margin-left: 5px;">DataOps & MLOps FILES</span>
-            <div class="tab-system">
-                <button class="tab-btn active" onclick="loadIntel('project1.md', this)">EVM_LAKEHOUSE.md</button>
-                <button class="tab-btn" onclick="loadIntel('project2.md', this)">BLOCKCHAIN_VIS.md</button>
-            </div>
-            <div id="intel-display" class="typewriter-output">
-                ( SELECT FOLDER TO LOAD CONTENTS )
+                <div class="intel-card" onclick="toggleCard(this, 'project-nyusu.md')">
+                    <div class="card-header">
+                        <div class="card-image-col">
+                            <img src="assets/nyusu3.jpg" alt="News Site" class="intel-photo">
+                        </div>
+                        <div class="card-title-col">
+                            <h3 class="card-title">GenAI News App</h3>
+                            <a href="https://github.com/2mur/nyusu" class="github-link hidden" target="_blank" onclick="event.stopPropagation()">[ VIEW REPOSITORY ]</a>
+                            <a href="https://nyusufu.web.app" class="github-link hidden" target="_blank" onclick="event.stopPropagation()">[ VIEW SITE ]</a>
+                        </div>
+                    </div>
+                    <div class="card-details hidden">
+                        <div class="markdown-content typewriter-output">
+                            ( LOADING PROJECT DETAILS... )
+                        </div>
+                    </div>
+                </div>
+
+                <div class="intel-card" onclick="toggleCard(this, 'project-nochill-tstxs.md')">
+                    <div class="card-header">
+                        <div class="card-image-col">
+                            <img src="assets/network.jpg" alt="Data Nodes" class="intel-photo">
+                        </div>
+                        <div class="card-title-col">
+                            <h3 class="card-title">Token Transfers Graph</h3>
+                            <a href="https://github.com/2mur/" class="github-link hidden" target="_blank" onclick="event.stopPropagation()">[ VIEW REPOSITORY ]</a>
+                            <a href="https://network-timelapse-avax.web.app/" class="github-link hidden" target="_blank" onclick="event.stopPropagation()">[ VIEW SITE ]</a>
+                        </div>
+                    </div>
+                    <div class="card-details hidden">
+                        <div class="markdown-content typewriter-output">
+                            ( LOADING PROJECT DETAILS... )
+                        </div>
+                    </div>
+                </div>
+
+                <div class="intel-card" onclick="toggleCard(this, 'project-tokenclinic.md')">
+                    <div class="card-header">
+                        <div class="card-image-col">
+                            <img src="assets/cubes.jpg" alt="Blockchain Pipeline" class="intel-photo">
+                        </div>
+                        <div class="card-title-col">
+                            <h3 class="card-title">Avalanche Blockchain ETL</h3>
+                            <a href="https://github.com/2mur/avalanche_normal_txs_project" class="github-link hidden" target="_blank" onclick="event.stopPropagation()">[ VIEW REPOSITORY ]</a>
+                            <a href="assets/avax-dash-token.html" class="github-link hidden" target="_blank" onclick="event.stopPropagation()">[ DASHBOARD - TOKEN METRICS ]</a>
+                            <a href="assets/avax-dash-users.html" class="github-link hidden" target="_blank" onclick="event.stopPropagation()">[ DASHBOARD - USERS METRICS ]</a>
+                        </div>
+                    </div>
+                    <div class="card-details hidden">
+                        <div class="markdown-content typewriter-output">
+                            ( LOADING PROJECT DETAILS... )
+                        </div>
+                    </div>
+                </div>
+
+                <div class="intel-card" onclick="toggleCard(this, 'project-housing.md')">
+                    <div class="card-header">
+                        <div class="card-image-col">
+                            <img src="assets/houses.jpg" alt="Housing Market Analysis" class="intel-photo">
+                        </div>
+                        <div class="card-title-col">
+                            <h3 class="card-title">Housing Market</h3>
+                            <a href="https://github.com/2mur/streamlit-glm" class="github-link hidden" target="_blank" onclick="event.stopPropagation()">[ VIEW V.3 REPOSITORY]</a>
+                            <a href="https://montreal-properties.web.app/" class="github-link hidden" target="_blank" onclick="event.stopPropagation()">[ SITE V.3-2026 ]</a>
+                            <a href="https://montreal-properties-2025.netlify.app" class="github-link hidden" target="_blank" onclick="event.stopPropagation()">[ SITE V.2-2026 ]</a>
+                            <a href="https://tboard-props-mtl.netlify.app/" class="github-link hidden" target="_blank" onclick="event.stopPropagation()">[ SITE V.1-2025 ]</a>                            
+                        </div>
+                    </div>
+                    <div class="card-details hidden">
+                        <div class="markdown-content typewriter-output">
+                            ( LOADING PROJECT DETAILS... )
+                        </div>
+                    </div>
+                </div>
+
+                <div class="intel-card" onclick="toggleCard(this, 'project-gis-air.md')">
+                    <div class="card-header">
+                        <div class="card-image-col">
+                            <img src="assets/air1.jpg" alt="Montreal Air Quality Monitoring" class="intel-photo">
+                        </div>
+                        <div class="card-title-col">
+                            <h3 class="card-title">Montreal Air Pollutants</h3>
+                            <a href="https://github.com/2mur/montreal-gis" class="github-link hidden" target="_blank" onclick="event.stopPropagation()">[ VIEW REPOSITORY]</a>
+                            <a href="assets/montreal_anomalies_v5.html" class="github-link hidden" target="_blank" onclick="event.stopPropagation()">[ SITE LINK ]</a>
+                        </div>
+                    </div>
+                    <div class="card-details hidden">
+                        <div class="markdown-content typewriter-output">
+                            ( LOADING PROJECT DETAILS... )
+                        </div>
+                    </div>
+                </div>
             </div>
         </section>
     </div>

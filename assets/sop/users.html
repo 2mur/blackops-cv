@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SOP ASSET TRACKER</title>
+    
+    <script type="importmap">
+    {
+        "imports": {
+            "react": "https://esm.sh/react@18.2.0",
+            "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+            "recharts": "https://esm.sh/recharts@2.12.2?deps=react@18.2.0,react-dom@18.2.0"
+        }
+    }
+    </script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+
+    <style>
+        body { background-color: #1e2418; color: #a4b596; margin: 0; overflow: hidden; text-shadow: 0 0 2px rgba(164, 181, 150, 0.4); }
+        .scanlines { background: linear-gradient(to bottom, rgba(255,255,255,0), rgba(255,255,255,0) 50%, rgba(0,0,0,0.15) 50%, rgba(0,0,0,0.15)); background-size: 100% 4px; pointer-events: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 50; }
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: rgba(58, 69, 49, 0.2); border-left: 1px solid rgba(164, 181, 150, 0.2); }
+        ::-webkit-scrollbar-thumb { background: rgba(164, 181, 150, 0.4); }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(164, 181, 150, 0.6); }
+        .crt-flicker { animation: flicker 0.15s infinite; }
+        @keyframes flicker { 0% { opacity: 0.95; } 50% { opacity: 1; } 100% { opacity: 0.98; } }
+        .blinking-cursor::after { content: '_'; animation: blink 1s step-end infinite; }
+        @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+        
+        .vis-network:focus { outline: none; }
+        .vis-tooltip { background-color: #141810 !important; border: 1px solid #a4b596 !important; color: #a4b596 !important; font-family: monospace !important; font-size: 10px !important; }
+    </style>
+</head>
+<body>
+    <div class="scanlines"></div>
+    <div id="root"></div>
+
+    <script type="text/babel" data-type="module">
+        import React, { useState, useEffect, useMemo, useRef } from 'react';
+        import { createRoot } from 'react-dom/client';
+        import { 
+            LineChart, Line, AreaChart, Area, ComposedChart, Scatter, BarChart, Bar,
+            XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, Legend
+        } from 'recharts';
+
+        // --- UTILS ---
+        const formatTokenBalance = (amount) => {
+            if (Math.abs(amount) >= 10000) return (amount / 1000).toFixed(1) + 'k';
+            return amount.toFixed(2);
+        };
+
+        const CustomCrossMarker = (props) => {
+            const { cx, cy, fill } = props;
+            if (!cx || !cy) return null;
+            return (
+                <g transform={`translate(${cx},${cy})`}>
+                    <line x1="-4" y1="-4" x2="4" y2="4" stroke={fill} strokeWidth="2" strokeLinecap="square" />
+                    <line x1="-4" y1="4" x2="4" y2="-4" stroke={fill} strokeWidth="2" strokeLinecap="square" />
+                </g>
+            );
+        };
+
+        const GlobalTooltip = ({ active, payload, label, selectedUser, overlays }) => {
+            if (active && payload && payload.length) {
+                const data = payload[0].payload;
+                const priceVal = data.price;
+                const userTradesInBin = selectedUser ? selectedUser.trade_events.filter(e => e.bin_time === data.time) : [];
+
+                return (
+                    <div className="bg-[#141810]/95 border border-[#a4b596] p-3 text-xs shadow-lg z-50 min-w-[250px]">
+                        <p className="text-[#d1e0c5] border-b border-[#a4b596]/30 pb-1 mb-2">{data.time || label}</p>
+                        <p>1H AVG PRICE (USD): ${(priceVal < 0.0001 ? priceVal.toExponential(4) : priceVal.toFixed(6))}</p>
+                        {data.native_price && <p className="opacity-70">1H NATIVE PRICE: {data.native_price.toFixed(6)}</p>}
+                        
+                        {selectedUser && overlays.balance && data.balance !== undefined && <p className="text-[#10b981] mt-1">BALANCE: {formatTokenBalance(data.balance)}</p>}
+                        {selectedUser && overlays.cost && data.total_invested_usd !== undefined && <p className="text-[#f59e0b] mt-1">COST BASIS: ${data.total_invested_usd.toFixed(2)}</p>}
+                        {selectedUser && overlays.pnl && data.cumulative_pnl_usd !== undefined && <p className="text-[#60a5fa] mt-1">PNL: ${data.cumulative_pnl_usd.toFixed(2)}</p>}
+
+                        {userTradesInBin.length > 0 && (
+                            <div className="mt-3 pt-2 border-t border-[#a4b596]/30">
+                                <p className="text-[#a4b596] mb-1 opacity-70">ACTIVITY DETECTED:</p>
+                                {userTradesInBin.map((trade, idx) => {
+                                    let tradeColor = "text-[#a4b596]";
+                                    if (trade.type === 'BUY') tradeColor = "text-[#10b981]";
+                                    if (trade.type === 'SELL') tradeColor = "text-[#f59e0b]";
+                                    if (trade.type.includes('TRANSFER')) tradeColor = "text-[#60a5fa]";
+
+                                    return (
+                                        <div key={idx} className="mb-2 pl-2 border-l-2 border-[#a4b596]/50">
+                                            <p className="text-[10px] opacity-70">{trade.exact_time.split(' ')[1]}</p>
+                                            <p className={tradeColor}>{trade.type} {trade.amount.toFixed(0)} TOKENS</p>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
+                );
+            }
+            return null;
+        };
+
+        // --- COMPONENTS ---
+
+        const NetworkGraph = ({ user, allUsers }) => {
+            const containerRef = useRef(null);
+            const networkInstance = useRef(null);
+            const [selectedNodeInfo, setSelectedNodeInfo] = useState(null);
+
+            useEffect(() => {
+                if (!user || !containerRef.current) return;
+
+                const nodesMap = new Map();
+                const edgesMap = new Map();
+
+                // Build Central Node
+                nodesMap.set(user.wallet, {
+                    id: user.wallet,
+                    label: 'TARGET',
+                    title: `CENTRAL NODE\n${user.wallet}`,
+                    color: { background: '#10b981', border: '#a4b596' },
+                    value: 30,
+                    font: { color: '#10b981' }
+                });
+
+                // Extract Transfer Edges
+                user.trade_events.forEach(t => {
+                    if (t.type === 'TRANSFER_IN' || t.type === 'TRANSFER_OUT') {
+                        const cp = t.counterparty;
+                        if (!cp) return;
+
+                        if (!nodesMap.has(cp)) {
+                            // Check if counterparty is a tracked user
+                            const trackedCp = allUsers.find(u => u.wallet === cp);
+                            const isTracked = !!trackedCp;
+
+                            nodesMap.set(cp, {
+                                id: cp,
+                                label: cp.substring(0, 6) + '...',
+                                title: `WALLET: ${cp}`,
+                                color: { 
+                                    background: isTracked ? '#60a5fa' : '#3a4531', 
+                                    border: isTracked ? '#60a5fa' : '#a4b596' 
+                                },
+                                value: isTracked ? 15 : 10,
+                                font: { color: '#a4b596' }
+                            });
+                        }
+
+                        // Direction
+                        const from = t.type === 'TRANSFER_OUT' ? user.wallet : cp;
+                        const to = t.type === 'TRANSFER_OUT' ? cp : user.wallet;
+                        const edgeKey = `${from}_${to}`;
+                        
+                        if (edgesMap.has(edgeKey)) {
+                            edgesMap.set(edgeKey, edgesMap.get(edgeKey) + t.amount);
+                        } else {
+                            edgesMap.set(edgeKey, t.amount);
+                        }
+                    }
+                });
+
+                const nodes = Array.from(nodesMap.values());
+                const edges = Array.from(edgesMap.entries()).map(([key, val]) => {
+                    const [from, to] = key.split('_');
+                    return { 
+                        from, to, value: val, 
+                        title: `${val.toLocaleString(undefined, {maximumFractionDigits:0})} TOKENS`,
+                        arrows: 'to',
+                        color: { color: 'rgba(164, 181, 150, 0.4)', highlight: '#10b981' }
+                    };
+                });
+
+                const data = { nodes, edges };
+                const options = {
+                    nodes: { shape: 'dot', scaling: { min: 5, max: 30 } },
+                    physics: {
+                        forceAtlas2Based: { gravitationalConstant: -50, centralGravity: 0.01, springLength: 100, springConstant: 0.08 },
+                        minVelocity: 0.75,
+                        solver: 'forceAtlas2Based'
+                    },
+                    interaction: { hover: true, tooltipDelay: 200 }
+                };
+
+                networkInstance.current = new window.vis.Network(containerRef.current, data, options);
+
+                networkInstance.current.on("click", function (params) {
+                    if (params.nodes.length > 0) {
+                        const nodeId = params.nodes[0];
+                        const foundUser = allUsers.find(u => u.wallet === nodeId);
+                        if (foundUser) {
+                            setSelectedNodeInfo({ type: 'TRACKED', data: foundUser });
+                        } else {
+                            setSelectedNodeInfo({ type: 'EXTERNAL', address: nodeId });
+                        }
+                    } else {
+                        setSelectedNodeInfo(null);
+                    }
+                });
+
+                return () => {
+                    if (networkInstance.current) {
+                        networkInstance.current.destroy();
+                        networkInstance.current = null;
+                    }
+                };
+            }, [user, allUsers]);
+
+            return (
+                <div className="relative w-full h-full border border-[#a4b596]/30 bg-[#141810]">
+                    <div className="absolute top-2 left-2 text-[10px] opacity-70 z-10 pointer-events-none">
+                        FORCE-DIRECTED TRANSFER TOPOLOGY
+                    </div>
+                    <div ref={containerRef} className="w-full h-full outline-none" />
+                    
+                    {selectedNodeInfo && (
+                        <div className="absolute top-4 right-4 bg-[#1e2418]/95 border border-[#a4b596] p-4 text-xs w-64 shadow-xl z-20">
+                            <button onClick={() => setSelectedNodeInfo(null)} className="absolute top-2 right-2 opacity-50 hover:opacity-100">[X]</button>
+                            {selectedNodeInfo.type === 'TRACKED' ? (
+                                <>
+                                    <h3 className="text-[#60a5fa] font-bold mb-2">TRACKED NODE</h3>
+                                    <p className="text-[10px] break-all opacity-80 mb-2">{selectedNodeInfo.data.wallet}</p>
+                                    <div className="space-y-1">
+                                        <p>PNL: <span className={selectedNodeInfo.data.net_profit_usd >= 0 ? "text-[#10b981]" : "text-[#f59e0b]"}>${selectedNodeInfo.data.net_profit_usd.toLocaleString(undefined, {maximumFractionDigits:0})}</span></p>
+                                        <p>VOLUME: <span className="text-[#d1e0c5]">${selectedNodeInfo.data.total_volume_usd.toLocaleString(undefined, {maximumFractionDigits:0})}</span></p>
+                                        <p>SWAPS: <span className="text-[#d1e0c5]">{selectedNodeInfo.data.swap_count}</span></p>
+                                        <p>CONNECTIONS: <span className="text-[#d1e0c5]">{selectedNodeInfo.data.unique_connections}</span></p>
+                                    </div>
+                                </>
+                            ) : (
+                                <>
+                                    <h3 className="text-[#f59e0b] font-bold mb-2">EXTERNAL NODE</h3>
+                                    <p className="text-[10px] break-all opacity-80">{selectedNodeInfo.address}</p>
+                                    <p className="mt-2 opacity-50 italic">Insufficient swap volume to generate full profile in tracking database.</p>
+                                </>
+                            )}
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const App = () => {
+            const [prices, setPrices] = useState([]);
+            const [users, setUsers] = useState([]);
+            const [loading, setLoading] = useState(true);
+            const [error, setError] = useState(null);
+            
+            const [activeTab, setActiveTab] = useState('TRACKER');
+
+            // Shared List State
+            const [searchQuery, setSearchQuery] = useState('');
+            const [sortMode, setSortMode] = useState('PROFIT');
+            const [currentPage, setCurrentPage] = useState(1);
+            const itemsPerPage = 50;
+
+            // Specific Selection States
+            const [selectedTrackerUser, setSelectedTrackerUser] = useState(null);
+            const [selectedNetworkUser, setSelectedNetworkUser] = useState(null);
+
+            // Chart Overlays
+            const [showBalance, setShowBalance] = useState(false);
+            const [showCost, setShowCost] = useState(false);
+            const [showPnl, setShowPnl] = useState(false);
+
+            useEffect(() => {
+                const loadData = async () => {
+                    try {
+                        const [priceRes, usersRes] = await Promise.all([
+                            fetch('data/prices/prices.json'),
+                            fetch('data/users.json') 
+                        ]);
+                        if (!priceRes.ok || !usersRes.ok) throw new Error("Could not load local JSON files.");
+                        
+                        const rawPrices = await priceRes.json();
+                        const sanitizedPrices = rawPrices.map(p => ({
+                            ...p, 
+                            price: Math.max(p.token_price_usd || 1e-12, 1e-12),
+                            native_price: p.native_price
+                        }));
+                        
+                        setPrices(sanitizedPrices);
+                        setUsers(await usersRes.json());
+                        setLoading(false);
+                    } catch (err) {
+                        setError(err.message);
+                        setLoading(false);
+                    }
+                };
+                loadData();
+            }, []);
+
+            const sortedUsers = useMemo(() => {
+                let filtered = users;
+                if (searchQuery.trim() !== '') {
+                    filtered = users.filter(u => u.wallet.toLowerCase().includes(searchQuery.toLowerCase()));
+                }
+                let sorted = [...filtered];
+                if (sortMode === 'PROFIT') sorted.sort((a, b) => b.net_profit_usd - a.net_profit_usd);
+                if (sortMode === 'LOSS') sorted.sort((a, b) => a.net_profit_usd - b.net_profit_usd);
+                if (sortMode === 'VOLUME') sorted.sort((a, b) => b.total_volume_usd - a.total_volume_usd);
+                if (sortMode === 'CONNECTIONS') sorted.sort((a, b) => (b.unique_connections || 0) - (a.unique_connections || 0));
+                
+                return sorted;
+            }, [users, sortMode, searchQuery]);
+
+            const totalPages = Math.max(1, Math.ceil(sortedUsers.length / itemsPerPage));
+            const currentUsers = useMemo(() => {
+                const start = (currentPage - 1) * itemsPerPage;
+                return sortedUsers.slice(start, start + itemsPerPage);
+            }, [sortedUsers, currentPage]);
+
+            useEffect(() => { setCurrentPage(1); }, [searchQuery, sortMode]);
+
+            // --- DATA MEMOS FOR TRACKER TAB ---
+            const globalChartData = useMemo(() => {
+                if (!selectedTrackerUser) return prices;
+                const tradeTimes = selectedTrackerUser.trade_events.map(t => new Date(t.bin_time).getTime());
+                const minTime = Math.min(...tradeTimes);
+                const maxTime = Math.max(...tradeTimes);
+                const padding = 43200000; 
+
+                const merged = prices
+                    .filter(p => {
+                        const pTime = new Date(p.time).getTime();
+                        return pTime >= (minTime - padding) && pTime <= (maxTime + padding);
+                    })
+                    .map(p => ({ ...p }));
+                
+                selectedTrackerUser.trade_events.forEach(trade => {
+                    const existingPoint = merged.find(p => p.time === trade.bin_time);
+                    if (existingPoint) {
+                        if (trade.type === 'BUY') existingPoint.buy_marker = existingPoint.price;
+                        if (trade.type === 'SELL') existingPoint.sell_marker = existingPoint.price;
+                    }
+                });
+
+                const historyMap = {};
+                selectedTrackerUser.history.forEach(h => { historyMap[h.time] = h; });
+                let lastBal = 0, lastInv = 0, lastPnl = 0, hasStarted = false;
+
+                merged.forEach(p => {
+                    if (historyMap[p.time]) {
+                        hasStarted = true;
+                        lastBal = historyMap[p.time].balance;
+                        lastInv = historyMap[p.time].total_invested_usd;
+                        lastPnl = historyMap[p.time].cumulative_pnl_usd;
+                    }
+                    if (hasStarted) {
+                        p.balance = lastBal; p.total_invested_usd = lastInv; p.cumulative_pnl_usd = lastPnl;
+                    }
+                });
+                return merged;
+            }, [prices, selectedTrackerUser]);
+
+            const userSpecificData = useMemo(() => {
+                if (!selectedTrackerUser) return null;
+                const sells = selectedTrackerUser.trade_events.filter(t => t.type === 'SELL');
+                const winningSells = sells.filter(t => t.action_pct > 0).length;
+                const winRate = sells.length > 0 ? ((winningSells / sells.length) * 100).toFixed(0) : 0;
+                const firstTradeTime = new Date(selectedTrackerUser.trade_events[0].bin_time).getTime();
+                const croppedHistory = selectedTrackerUser.history.filter(h => new Date(h.time).getTime() >= firstTradeTime);
+
+                const distributionTemplate = [];
+                distributionTemplate.push({ name: '<-100%', min: -Infinity, max: -100, BUY: 0, SELL: 0 });
+                for (let i = -100; i < 0; i += 10) distributionTemplate.push({ name: `${i} to ${i+10}%`, min: i, max: i+10, BUY: 0, SELL: 0 });
+                for (let i = 0; i < 200; i += 10) distributionTemplate.push({ name: `${i} to ${i+10}%`, min: i, max: i+10, BUY: 0, SELL: 0 });
+                for (let i = 200; i < 1000; i += 100) distributionTemplate.push({ name: `${i} to ${i+100}%`, min: i, max: i+100, BUY: 0, SELL: 0 });
+                for (let i = 1000; i < 50000; i += 1000) distributionTemplate.push({ name: `${i} to ${i+1000}%`, min: i, max: i+1000, BUY: 0, SELL: 0 });
+                distributionTemplate.push({ name: '>50000%', min: 50000, max: Infinity, BUY: 0, SELL: 0 });
+
+                selectedTrackerUser.trade_events.forEach(t => {
+                    if (t.type !== 'BUY' && t.type !== 'SELL') return; 
+                    const pct = t.action_pct * 100;
+                    for (let b of distributionTemplate) {
+                        if (pct >= b.min && pct < b.max) { b[t.type] += 1; break; }
+                    }
+                });
+
+                const distributionData = distributionTemplate.filter(b => b.BUY > 0 || b.SELL > 0);
+                return { winRate, croppedHistory, distributionData };
+            }, [selectedTrackerUser]);
+
+            if (loading) return <div className="h-screen flex items-center justify-center font-mono">INITIALIZING ASSET ...</div>;
+            if (error) return <div className="h-screen flex flex-col items-center justify-center font-mono text-red-500"><p>SYSTEM ERROR</p><p className="text-sm mt-2">{error}</p></div>;
+
+            return (
+                <div className="h-screen flex font-mono bg-[#1e2418] text-[#a4b596] crt-flicker relative z-10">
+                    <div className="w-12 border-r border-[#a4b596]/30 flex flex-col items-center py-4 bg-[#141810] flex-shrink-0">
+                        <div className="text-[10px] transform -rotate-90 tracking-widest mt-12 opacity-50 whitespace-nowrap">
+                            SYS.OP.REQ. 0x8A9F
+                        </div>
+                    </div>
+
+                    <div className="flex-1 flex flex-col p-4 overflow-hidden gap-3">
+                        <header className="flex justify-between items-end border-b border-[#a4b596]/50 pb-2">
+                            <div>
+                                <h1 className="text-2xl font-bold tracking-widest text-[#d1e0c5]">NOCHILL TOKEN</h1>
+                                <p className="text-xs opacity-70">SOP SYSTEM // ASSET TRACKING MODULE</p>
+                            </div>
+                            <div className="flex gap-4">
+                                <button onClick={() => setActiveTab('TRACKER')} className={`px-4 py-1 border transition-colors ${activeTab === 'TRACKER' ? 'bg-[#10b981]/30 border-[#10b981] text-[#10b981]' : 'border-[#a4b596]/50 hover:bg-[#a4b596]/10'}`}>ASSET TRACKER</button>
+                                <button onClick={() => setActiveTab('NETWORK')} className={`px-4 py-1 border transition-colors ${activeTab === 'NETWORK' ? 'bg-[#10b981]/30 border-[#10b981] text-[#10b981]' : 'border-[#a4b596]/50 hover:bg-[#a4b596]/10'}`}>TRANSFER NETWORK</button>
+                            </div>
+                        </header>
+
+                        {/* =========================================
+                            TAB 1: ASSET TRACKER 
+                            ========================================= */}
+                        {activeTab === 'TRACKER' && (
+                            <div className="flex-1 flex flex-col overflow-hidden gap-3">
+                                <div className="h-1/4 w-full bg-[#3a4531]/20 border border-[#a4b596]/30 p-2 flex flex-col relative flex-shrink-0">
+                                    <div className="absolute top-2 left-2 text-[10px] opacity-70 z-10">
+                                        {selectedTrackerUser ? "TARGET PRICE TRAJECTORY ZOOM // LOG SCALE" : "GLOBAL PRICE TRAJECTORY // LOG SCALE"}
+                                    </div>
+                                    
+                                    {selectedTrackerUser && (
+                                        <div className="absolute top-2 right-2 flex gap-2 z-10 text-[10px]">
+                                            <button onClick={() => setShowBalance(!showBalance)} className={`px-2 py-1 border transition-colors ${showBalance ? 'bg-[#10b981]/30 border-[#10b981] text-[#10b981]' : 'border-[#a4b596]/50 opacity-70 hover:opacity-100'}`}>OVERLAY BALANCE</button>
+                                            <button onClick={() => setShowCost(!showCost)} className={`px-2 py-1 border transition-colors ${showCost ? 'bg-[#f59e0b]/30 border-[#f59e0b] text-[#f59e0b]' : 'border-[#a4b596]/50 opacity-70 hover:opacity-100'}`}>OVERLAY COST BASIS</button>
+                                            <button onClick={() => setShowPnl(!showPnl)} className={`px-2 py-1 border transition-colors ${showPnl ? 'bg-[#60a5fa]/30 border-[#60a5fa] text-[#60a5fa]' : 'border-[#a4b596]/50 opacity-70 hover:opacity-100'}`}>OVERLAY PNL</button>
+                                        </div>
+                                    )}
+
+                                    <div className="flex-1 mt-4">
+                                        <ResponsiveContainer width="100%" height="100%">
+                                            <ComposedChart data={globalChartData}>
+                                                <XAxis dataKey="time" hide />
+                                                <YAxis yAxisId="price" scale="log" domain={['auto', 'auto']} tickFormatter={(val) => val < 0.001 ? val.toExponential(1) : val.toFixed(4)} tick={{fontSize: 10, fill: '#a4b596'}} axisLine={false} tickLine={false} width={60} />
+                                                {selectedTrackerUser && showBalance && <YAxis yAxisId="bal" orientation="right" hide domain={['auto', 'auto']} />}
+                                                {selectedTrackerUser && (showCost || showPnl) && <YAxis yAxisId="usd" orientation="right" hide domain={['auto', 'auto']} />}
+                                                <Tooltip content={<GlobalTooltip selectedUser={selectedTrackerUser} overlays={{balance: showBalance, cost: showCost, pnl: showPnl}} />} />
+                                                <Line yAxisId="price" type="monotone" dataKey="price" stroke="#a4b596" strokeWidth={1.5} dot={false} isAnimationActive={false} connectNulls />
+                                                {selectedTrackerUser && showBalance && <Line yAxisId="bal" type="stepAfter" dataKey="balance" stroke="#10b981" strokeWidth={1.5} strokeDasharray="3 3" dot={false} isAnimationActive={false} connectNulls />}
+                                                {selectedTrackerUser && showCost && <Line yAxisId="usd" type="stepAfter" dataKey="total_invested_usd" stroke="#f59e0b" strokeWidth={1.5} strokeDasharray="3 3" dot={false} isAnimationActive={false} connectNulls />}
+                                                {selectedTrackerUser && showPnl && <Line yAxisId="usd" type="stepAfter" dataKey="cumulative_pnl_usd" stroke="#60a5fa" strokeWidth={1.5} strokeDasharray="3 3" dot={false} isAnimationActive={false} connectNulls />}
+                                                {selectedTrackerUser && <Scatter yAxisId="price" dataKey="buy_marker" fill="#10b981" shape={<CustomCrossMarker />} isAnimationActive={false} />}
+                                                {selectedTrackerUser && <Scatter yAxisId="price" dataKey="sell_marker" fill="#f59e0b" shape={<CustomCrossMarker />} isAnimationActive={false} />}
+                                            </ComposedChart>
+                                        </ResponsiveContainer>
+                                    </div>
+                                </div>
+
+                                {selectedTrackerUser && (
+                                    <div className="h-64 w-full bg-[#141810]/95 border border-[#10b981]/80 p-2 flex flex-col gap-2 flex-shrink-0">
+                                        <div className="flex justify-between items-center border-b border-[#10b981]/30 pb-2 px-2">
+                                            <div className="flex gap-6 items-end">
+                                                <div>
+                                                    <h3 className="text-[#10b981] text-sm mb-1">TRACKING ADDRESS</h3>
+                                                    <p className="text-[10px] break-all text-[#d1e0c5]">{selectedTrackerUser.wallet}</p>
+                                                </div>
+                                                <div className="text-xs flex gap-4 opacity-80">
+                                                    <p>NET EXTRACTED: <span className={selectedTrackerUser.net_profit_usd >= 0 ? "text-[#10b981] font-bold" : "text-red-400 font-bold"}>${selectedTrackerUser.net_profit_usd.toLocaleString(undefined, {maximumFractionDigits:0})}</span></p>
+                                                    <p>VOL: <span className="text-[#d1e0c5]">${selectedTrackerUser.total_volume_usd.toLocaleString(undefined, {maximumFractionDigits:0})}</span></p>
+                                                    <p>SWAPS: <span className="text-[#d1e0c5]">{selectedTrackerUser.swap_count}</span></p>
+                                                    <p>WIN RATE: <span className={userSpecificData.winRate > 50 ? "text-[#10b981]" : "text-red-400"}>{userSpecificData.winRate}%</span></p>
+                                                </div>
+                                            </div>
+                                            <button onClick={() => setSelectedTrackerUser(null)} className="border border-[#a4b596] py-1 px-4 text-xs hover:bg-[#a4b596] hover:text-[#1e2418] transition-colors">[X] DISENGAGE</button>
+                                        </div>
+                                        <div className="flex-1 grid grid-cols-4 gap-2 h-full">
+                                            <div className="relative border border-[#a4b596]/20 bg-[#1e2418]/50 pt-4">
+                                                <div className="absolute top-1 left-2 text-[10px] opacity-70 z-10 text-[#10b981]">TOKEN BALANCE</div>
+                                                <ResponsiveContainer width="100%" height="100%"><AreaChart data={userSpecificData.croppedHistory}><XAxis dataKey="time" hide /><YAxis domain={['dataMin', 'dataMax']} tickFormatter={formatTokenBalance} tick={{fontSize: 9, fill: '#10b981'}} axisLine={false} tickLine={false} width={40} /><Tooltip labelFormatter={(label) => label} contentStyle={{backgroundColor: '#141810', border: '1px solid #10b981', fontSize: '10px'}} /><ReferenceLine y={0} stroke="#a4b596" strokeDasharray="3 3" opacity={0.5} /><Area type="stepAfter" dataKey="balance" stroke="#10b981" fill="#10b981" fillOpacity={0.2} isAnimationActive={false}/></AreaChart></ResponsiveContainer>
+                                            </div>
+                                            <div className="relative border border-[#a4b596]/20 bg-[#1e2418]/50 pt-4">
+                                                <div className="absolute top-1 left-2 text-[10px] opacity-70 z-10 text-[#f59e0b]">ACTIVE COST BASIS (USD)</div>
+                                                <ResponsiveContainer width="100%" height="100%"><LineChart data={userSpecificData.croppedHistory}><XAxis dataKey="time" hide /><YAxis domain={['dataMin', 'dataMax']} tickFormatter={(val) => '$'+val.toFixed(0)} tick={{fontSize: 9, fill: '#f59e0b'}} axisLine={false} tickLine={false} width={45} /><Tooltip labelFormatter={(label) => label} contentStyle={{backgroundColor: '#141810', border: '1px solid #f59e0b', fontSize: '10px'}} /><Line type="stepAfter" dataKey="total_invested_usd" stroke="#f59e0b" strokeWidth={1.5} dot={false} isAnimationActive={false}/></LineChart></ResponsiveContainer>
+                                            </div>
+                                            <div className="relative border border-[#a4b596]/20 bg-[#1e2418]/50 pt-4">
+                                                <div className="absolute top-1 left-2 text-[10px] opacity-70 z-10 text-[#60a5fa]">REALIZED PNL (USD)</div>
+                                                <ResponsiveContainer width="100%" height="100%"><AreaChart data={userSpecificData.croppedHistory}><XAxis dataKey="time" hide /><YAxis domain={['dataMin', 'dataMax']} tickFormatter={(val) => '$'+val.toFixed(0)} tick={{fontSize: 9, fill: '#60a5fa'}} axisLine={false} tickLine={false} width={45} /><Tooltip labelFormatter={(label) => label} contentStyle={{backgroundColor: '#141810', border: '1px solid #60a5fa', fontSize: '10px'}} /><ReferenceLine y={0} stroke="#a4b596" strokeDasharray="3 3" opacity={0.5} /><Area type="stepAfter" dataKey="cumulative_pnl_usd" stroke="#60a5fa" fill="#60a5fa" fillOpacity={0.2} isAnimationActive={false}/></AreaChart></ResponsiveContainer>
+                                            </div>
+                                            <div className="relative border border-[#a4b596]/20 bg-[#1e2418]/50 pt-4 pb-2 pr-2">
+                                                <div className="absolute top-1 left-2 text-[10px] opacity-70 z-10 text-[#d1e0c5]">BEHAVIORAL TRIGGERS (ACTION PNL %)</div>
+                                                <ResponsiveContainer width="100%" height="100%"><BarChart data={userSpecificData.distributionData}><XAxis dataKey="name" tick={{fontSize: 8, fill: '#a4b596'}} axisLine={false} tickLine={false} interval={0} angle={-25} textAnchor="end" /><YAxis tick={{fontSize: 9, fill: '#a4b596'}} axisLine={false} tickLine={false} width={20} allowDecimals={false} /><Tooltip cursor={{fill: '#a4b596', opacity: 0.1}} contentStyle={{backgroundColor: '#141810', border: '1px solid #a4b596', fontSize: '10px'}} /><Legend wrapperStyle={{fontSize: '9px'}} iconType="circle" /><Bar dataKey="BUY" fill="#10b981" isAnimationActive={false} /><Bar dataKey="SELL" fill="#f59e0b" isAnimationActive={false} /></BarChart></ResponsiveContainer>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+
+                                <div className="flex-1 flex flex-col overflow-hidden">
+                                    <div className="flex justify-between items-center mb-1 text-xs">
+                                        <div className="flex gap-4 items-center w-full">
+                                            <input type="text" placeholder="SEARCH WALLET..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="bg-[#141810] border border-[#a4b596]/50 text-[#d1e0c5] px-2 py-1 outline-none focus:border-[#10b981] transition-colors w-64 placeholder-[#a4b596]/50" />
+                                            <div className="flex gap-2 items-center border-l border-[#a4b596]/30 pl-4">
+                                                <span className="opacity-70">SORT TARGETS BY:</span>
+                                                <button onClick={() => setSortMode('PROFIT')} className={`px-2 py-1 border transition-colors ${sortMode === 'PROFIT' ? 'bg-[#10b981]/30 border-[#10b981] text-[#10b981]' : 'border-[#a4b596]/50 opacity-70 hover:opacity-100'}`}>EXTRACTED PROFIT</button>
+                                                <button onClick={() => setSortMode('LOSS')} className={`px-2 py-1 border transition-colors ${sortMode === 'LOSS' ? 'bg-[#f59e0b]/30 border-[#f59e0b] text-[#f59e0b]' : 'border-[#a4b596]/50 opacity-70 hover:opacity-100'}`}>MAX REKT (LOSS)</button>
+                                                <button onClick={() => setSortMode('VOLUME')} className={`px-2 py-1 border transition-colors ${sortMode === 'VOLUME' ? 'bg-[#60a5fa]/30 border-[#60a5fa] text-[#60a5fa]' : 'border-[#a4b596]/50 opacity-70 hover:opacity-100'}`}>TOTAL VOLUME</button>
+                                            </div>
+                                        </div>
+                                        <div className="flex gap-2 items-center whitespace-nowrap ml-4">
+                                            <button onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1} className="px-2 border border-[#a4b596]/50 disabled:opacity-30">&lt; PREV</button>
+                                            <span>PAGE {currentPage} / {totalPages}</span>
+                                            <button onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages} className="px-2 border border-[#a4b596]/50 disabled:opacity-30">NEXT &gt;</button>
+                                        </div>
+                                    </div>
+                                    <div className="overflow-y-auto pr-2 grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-8 gap-2 content-start pt-1">
+                                        {currentUsers.length === 0 ? <div className="col-span-full pt-4 opacity-50 text-center">NO WALLETS MATCHING SEARCH QUERY</div> : currentUsers.map(user => (
+                                            <div key={user.wallet} onClick={() => setSelectedTrackerUser(user)} className={`cursor-pointer p-2 border text-[10px] transition-colors flex flex-col justify-between h-16 ${selectedTrackerUser?.wallet === user.wallet ? 'bg-[#10b981]/20 border-[#10b981]' : 'bg-[#141810] border-[#a4b596]/30 hover:bg-[#3a4531]/40'}`}>
+                                                <div className="truncate opacity-80">{user.wallet}</div>
+                                                <div className="mt-1 flex justify-between items-end">
+                                                    <div className={user.net_profit_usd >= 0 ? "text-[#10b981]" : "text-[#f59e0b]"}>${user.net_profit_usd.toLocaleString(undefined, {maximumFractionDigits:0})}</div>
+                                                    {user.history[user.history.length-1]?.balance < 0 && <div className="text-[#f59e0b] text-[8px] animate-pulse">!DUMP!</div>}
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* =========================================
+                            TAB 2: TRANSFER NETWORK 
+                            ========================================= */}
+                        {activeTab === 'NETWORK' && (
+                            <div className="flex-1 flex overflow-hidden gap-4">
+                                
+                                {/* LEFT COLUMN: USER SELECTION */}
+                                <div className="w-1/3 flex flex-col gap-2">
+                                    <div className="flex flex-col gap-2 mb-2 text-xs">
+                                        <input type="text" placeholder="SEARCH WALLET..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="bg-[#141810] border border-[#a4b596]/50 text-[#d1e0c5] px-2 py-1 outline-none focus:border-[#10b981] transition-colors w-full placeholder-[#a4b596]/50" />
+                                        <div className="flex justify-between items-center bg-[#141810] p-1 border border-[#a4b596]/30">
+                                            <button onClick={() => setSortMode('CONNECTIONS')} className={`flex-1 py-1 px-2 border transition-colors text-center ${sortMode === 'CONNECTIONS' ? 'bg-[#10b981]/30 border-[#10b981] text-[#10b981]' : 'border-transparent opacity-70 hover:opacity-100'}`}>CONNECTIONS</button>
+                                            <button onClick={() => setSortMode('PROFIT')} className={`flex-1 py-1 px-2 border transition-colors text-center ${sortMode === 'PROFIT' ? 'bg-[#f59e0b]/30 border-[#f59e0b] text-[#f59e0b]' : 'border-transparent opacity-70 hover:opacity-100'}`}>PROFIT</button>
+                                            <button onClick={() => setSortMode('VOLUME')} className={`flex-1 py-1 px-2 border transition-colors text-center ${sortMode === 'VOLUME' ? 'bg-[#60a5fa]/30 border-[#60a5fa] text-[#60a5fa]' : 'border-transparent opacity-70 hover:opacity-100'}`}>VOLUME</button>
+                                        </div>
+                                    </div>
+                                    
+                                    <div className="flex-1 overflow-y-auto pr-2 flex flex-col gap-2">
+                                        {currentUsers.map(user => (
+                                            <div 
+                                                key={user.wallet} 
+                                                onClick={() => setSelectedNetworkUser(user)}
+                                                className={`cursor-pointer p-3 border text-[10px] transition-colors flex flex-col ${selectedNetworkUser?.wallet === user.wallet ? 'bg-[#10b981]/20 border-[#10b981]' : 'bg-[#141810] border-[#a4b596]/30 hover:bg-[#3a4531]/40'}`}
+                                            >
+                                                <div className="truncate opacity-80 mb-2 font-bold">{user.wallet}</div>
+                                                <div className="grid grid-cols-3 gap-2">
+                                                    <div>
+                                                        <span className="opacity-50 block">EDGES</span>
+                                                        <span className="text-[#d1e0c5]">{user.unique_connections || 0}</span>
+                                                    </div>
+                                                    <div>
+                                                        <span className="opacity-50 block">VOL</span>
+                                                        <span className="text-[#d1e0c5]">${user.total_volume_usd.toLocaleString(undefined, {maximumFractionDigits:0})}</span>
+                                                    </div>
+                                                    <div>
+                                                        <span className="opacity-50 block">PNL</span>
+                                                        <span className={user.net_profit_usd >= 0 ? "text-[#10b981]" : "text-[#f59e0b]"}>${user.net_profit_usd.toLocaleString(undefined, {maximumFractionDigits:0})}</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                    
+                                    <div className="flex justify-between items-center text-xs mt-2 border-t border-[#a4b596]/30 pt-2">
+                                        <button onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1} className="px-2 border border-[#a4b596]/50 disabled:opacity-30">&lt; PREV</button>
+                                        <span>PAGE {currentPage} / {totalPages}</span>
+                                        <button onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages} className="px-2 border border-[#a4b596]/50 disabled:opacity-30">NEXT &gt;</button>
+                                    </div>
+                                </div>
+
+                                {/* RIGHT COLUMN: GRAPH */}
+                                <div className="flex-1 h-full">
+                                    {selectedNetworkUser ? (
+                                        <NetworkGraph user={selectedNetworkUser} allUsers={users} />
+                                    ) : (
+                                        <div className="w-full h-full border border-[#a4b596]/30 bg-[#141810] flex items-center justify-center opacity-50">
+                                            SELECT A USER TO RENDER TOPOLOGY
+                                        </div>
+                                    )}
+                                </div>
+
+                            </div>
+                        )}
+
+                        <footer className="text-[10px] border-t border-[#a4b596]/50 pt-1 mt-auto flex-shrink-0">
+                            <span className="blinking-cursor">made by t</span>
+                        </footer>
+                    </div>
+                </div>
+            );
+        };
+
+        const root = createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>

@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SOP ORACLE: HF TRADING TERMINAL</title>
+    
+    <script type="importmap">
+    {
+        "imports": {
+            "react": "https://esm.sh/react@18.2.0",
+            "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+            "recharts": "https://esm.sh/recharts@2.12.2?deps=react@18.2.0,react-dom@18.2.0"
+        }
+    }
+    </script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <style>
+        body { background-color: #1e2418; color: #a4b596; margin: 0; overflow-x: hidden; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+        .scanlines { background: linear-gradient(to bottom, rgba(255,255,255,0), rgba(255,255,255,0) 50%, rgba(0,0,0,0.15) 50%, rgba(0,0,0,0.15)); background-size: 100% 4px; pointer-events: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 50; }
+        .crt-flicker { animation: flicker 0.15s infinite; }
+        @keyframes flicker { 0% { opacity: 0.95; } 50% { opacity: 1; } 100% { opacity: 0.98; } }
+        .glow-box { box-shadow: inset 0 0 20px rgba(164, 181, 150, 0.03); background: rgba(20, 24, 16, 0.4); backdrop-filter: blur(4px); }
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: rgba(58, 69, 49, 0.1); border-left: 1px solid rgba(164, 181, 150, 0.1); }
+        ::-webkit-scrollbar-thumb { background: rgba(164, 181, 150, 0.3); }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(164, 181, 150, 0.5); }
+        select { appearance: none; background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23a4b596' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e"); background-repeat: no-repeat; background-position: right 0.5rem center; background-size: 1em; padding-right: 2rem !important; }
+        .recharts-scatter-symbol { stroke-width: 2px; }
+    </style>
+</head>
+<body>
+    <div class="scanlines"></div>
+    <div id="root"></div>
+
+    <script type="text/babel" data-type="module">
+        import React, { useState, useEffect, useMemo } from 'react';
+        import { createRoot } from 'react-dom/client';
+        import { 
+            ComposedChart, Line, XAxis, YAxis, Tooltip, 
+            ResponsiveContainer, CartesianGrid, Brush, Area, Legend, Scatter
+        } from 'recharts';
+
+        const TARGET_MODELS = ['xgboost', 'lgbm', 'esn', 'transformer', 'cnn1d', 'rl'];
+        const DUNE_ID = '4834833';
+        const DENOMS = ['usd', 'native'];
+        const DATASET_MODES = ['full', 'filtered', 'pca'];
+        
+        const MODE_COLORS = [
+            '#6b7280', '#3b82f6', '#8b5cf6', '#f59e0b', '#10b981', '#0ea5e9', '#f43f5e', '#a855f7', '#ec4899', '#14b8a6'
+        ];
+
+        const SimTooltip = ({ active, payload, label, selectedSimMode, sym }) => {
+            if (active && payload && payload.length) {
+                const data = payload[0].payload;
+                return (
+                    <div className="bg-[#141810]/95 border border-[#a4b596]/50 p-3 text-xs shadow-2xl z-50 min-w-[220px] backdrop-blur-md">
+                        <p className="text-[#d1e0c5] border-b border-[#a4b596]/30 pb-2 mb-2">{data.time || label}</p>
+                        
+                        <div className="flex justify-between items-center mt-1 border-b border-[#a4b596]/10 pb-2 mb-2">
+                            <span className="opacity-70 text-[10px]">ASSET PRICE:</span>
+                            <span className="text-white font-bold">{sym}{data.price ? data.price.toFixed(6) : 'N/A'}</span>
+                        </div>
+
+                        {payload.map((entry, idx) => {
+                            if (entry.dataKey.startsWith('mode') && !entry.dataKey.includes('_')) {
+                                const m = parseInt(entry.dataKey.replace('mode', ''));
+                                const isIsolated = selectedSimMode === m;
+                                if (selectedSimMode && !isIsolated) return null;
+                                
+                                const pnl = entry.value;
+                                const bats = data[`mode${m}_bats`];
+                                return (
+                                    <div key={idx} className="mt-1 pt-1">
+                                        <div className="flex justify-between items-center text-[10px]">
+                                            <span style={{color: entry.color}} className="font-bold">MODE {m} EQUITY:</span>
+                                            <span className="font-bold text-white">{sym}{pnl.toFixed(2)} {m === 5 && bats !== undefined ? `(${bats}🔋)` : ''}</span>
+                                        </div>
+                                    </div>
+                                );
+                            }
+                            return null;
+                        })}
+                    </div>
+                );
+            }
+            return null;
+        };
+
+        const App = () => {
+            const [simDatasets, setSimDatasets] = useState({});
+            const [availableModels, setAvailableModels] = useState([]);
+            
+            const [selectedModel, setSelectedModel] = useState('');
+            const [selectedDenom, setSelectedDenom] = useState('usd');
+            const [selectedMode, setSelectedMode] = useState('full');
+            
+            const [selectedSimMode, setSelectedSimMode] = useState(null);
+            const [loading, setLoading] = useState(true);
+            const [error, setError] = useState(null);
+
+            useEffect(() => {
+                setSelectedSimMode(null);
+            }, [selectedModel, selectedDenom, selectedMode]);
+
+            useEffect(() => {
+                const loadData = async () => {
+                    const loadedSims = {};
+                    const availModels = [];
+
+                    try {
+                        await Promise.all(TARGET_MODELS.map(async (model) => {
+                            try {
+                                const resJSON = await fetch(`data/simulation/${model}_simulation_${DUNE_ID}.json`);
+                                if (resJSON.ok) {
+                                    loadedSims[model] = await resJSON.json();
+                                    availModels.push(model);
+                                }
+                            } catch (e) {}
+                        }));
+
+                        if (availModels.length === 0) throw new Error("No simulation payloads found. Run trading script first.");
+
+                        setSimDatasets(loadedSims);
+                        setAvailableModels(availModels);
+                        
+                        setSelectedModel(availModels[0]);
+                        setLoading(false);
+                    } catch (err) {
+                        setError(err.message);
+                        setLoading(false);
+                    }
+                };
+                loadData();
+            }, []);
+
+            const simulationData = useMemo(() => {
+                if (loading || !selectedModel) return null;
+                const modelSims = simDatasets[selectedModel];
+                if (!modelSims || !modelSims[selectedDenom] || !modelSims[selectedDenom][selectedMode]) return null;
+                
+                const targetSim = modelSims[selectedDenom][selectedMode];
+                const mergedCurves = {};
+                
+                targetSim.modes.forEach(modeData => {
+                    modeData.equity_curve.forEach(pt => {
+                        if (!mergedCurves[pt.time]) mergedCurves[pt.time] = { time: pt.time, price: pt.price };
+                        mergedCurves[pt.time][`mode${modeData.mode}`] = pt.portfolio;
+                        mergedCurves[pt.time][`mode${modeData.mode}_action`] = pt.action;
+                        mergedCurves[pt.time][`mode${modeData.mode}_trade_value`] = pt.trade_value;
+                        mergedCurves[pt.time][`mode${modeData.mode}_trade_tokens`] = pt.trade_tokens;
+                        mergedCurves[pt.time][`mode${modeData.mode}_bats`] = pt.batteries;
+                    });
+                });
+
+                const chartData = Object.values(mergedCurves).sort((a,b) => new Date(a.time) - new Date(b.time)).map(pt => ({
+                    ...pt,
+                    trade_buy: selectedSimMode && pt[`mode${selectedSimMode}_action`] === 'BUY' ? pt.price : null,
+                    trade_sell: selectedSimMode && pt[`mode${selectedSimMode}_action`] === 'SELL' ? pt.price : null,
+                }));
+
+                return { metrics: targetSim.metrics, modes: targetSim.modes, chartData };
+            }, [simDatasets, selectedModel, selectedDenom, selectedMode, selectedSimMode, loading]);
+
+            const activeTrades = useMemo(() => {
+                if (!simulationData || !selectedSimMode) return [];
+                return simulationData.chartData
+                    .filter(pt => pt[`mode${selectedSimMode}_action`])
+                    .map(pt => ({
+                        time: pt.time,
+                        action: pt[`mode${selectedSimMode}_action`],
+                        price: pt.price,
+                        value: pt[`mode${selectedSimMode}_trade_value`],
+                        tokens: pt[`mode${selectedSimMode}_trade_tokens`]
+                    }))
+                    .reverse(); // Newest first
+            }, [simulationData, selectedSimMode]);
+
+            if (loading) return <div className="h-screen flex items-center justify-center text-xl tracking-widest animate-pulse text-[#60a5fa]">SYNCHRONIZING ORACLE MATRICES...</div>;
+            if (error) return <div className="h-screen flex flex-col items-center justify-center text-red-500 max-w-2xl mx-auto text-center"><p className="text-2xl font-bold mb-4">DATA INGESTION ERROR</p><p className="text-sm">{error}</p></div>;
+
+            const sym = selectedDenom === 'usd' ? '$' : 'A ';
+
+            return (
+                <div className="h-screen flex flex-col p-3 bg-[#1e2418] text-[#a4b596] crt-flicker relative z-10 gap-2 overflow-hidden">
+                    
+                    {/* HEADER */}
+                    <header className="flex flex-wrap justify-between items-end border-b border-[#a4b596]/30 pb-2 shrink-0 gap-4">
+                        <div>
+                            <h1 className="text-lg font-bold tracking-widest text-[#d1e0c5] drop-shadow-md">HF TRADING SIMULATION TERMINAL</h1>
+                            <p className="text-[9px] opacity-70 tracking-widest mt-0.5">EVALUATING TOP 25% CHRONOLOGICAL SPLIT</p>
+                        </div>
+                        
+                        <div className="flex flex-wrap items-center gap-3 text-xs">
+                            <div className="flex flex-col gap-0.5">
+                                <span className="text-[8px] opacity-70 tracking-widest">ACTIVE MODEL</span>
+                                <select value={selectedModel} onChange={e => setSelectedModel(e.target.value)} className="bg-[#141810] border border-[#a4b596]/40 py-1 px-2 outline-none hover:bg-[#3a4531] text-[10px]">
+                                    {availableModels.map(m => <option key={m} value={m}>{m.toUpperCase()}</option>)}
+                                </select>
+                            </div>
+                            
+                            <div className="flex flex-col gap-0.5">
+                                <span className="text-[8px] opacity-70 tracking-widest">DENOMINATION</span>
+                                <select value={selectedDenom} onChange={e => setSelectedDenom(e.target.value)} className="bg-[#141810] border border-[#a4b596]/40 py-1 px-2 outline-none hover:bg-[#3a4531] text-[10px]">
+                                    {DENOMS.map(d => <option key={d} value={d}>{d.toUpperCase()}</option>)}
+                                </select>
+                            </div>
+
+                            <div className="flex flex-col gap-0.5">
+                                <span className="text-[8px] opacity-70 tracking-widest">FEATURE SET</span>
+                                <select value={selectedMode} onChange={e => setSelectedMode(e.target.value)} className="bg-[#141810] border border-[#a4b596]/40 py-1 px-2 outline-none hover:bg-[#3a4531] text-[10px]">
+                                    {DATASET_MODES.map(f => <option key={f} value={f}>{f.toUpperCase()}</option>)}
+                                </select>
+                            </div>
+                        </div>
+                    </header>
+
+                    {simulationData ? (
+                        <div className="flex-1 flex gap-2 min-h-0">
+                            
+                            {/* MAIN LEFT CONTAINER */}
+                            <div className="flex-[4] xl:flex-[5] flex flex-col gap-2 min-h-0">
+                                {/* CHART AREA - TOP */}
+                                <div className="flex-[1.5] border border-[#a4b596]/30 bg-[#141810] p-1.5 flex flex-col glow-box relative min-h-[200px]">
+                                    <div className="absolute top-1.5 left-2 z-10 text-[8px] tracking-widest opacity-70 flex gap-3">
+                                        <span className="text-[#60a5fa] font-bold">ASSET PRICE (L)</span>
+                                        <span className="text-white font-bold">NET PNL (R)</span>
+                                    </div>
+                                    <div className="flex-1 mt-4">
+                                        <ResponsiveContainer width="100%" height="100%">
+                                            <ComposedChart key={`simchart-${selectedModel}-${selectedDenom}-${selectedMode}`} data={simulationData.chartData}>
+                                                <CartesianGrid strokeDasharray="2 4" stroke="#a4b596" opacity={0.1} vertical={false} />
+                                                <XAxis dataKey="time" hide />
+                                                
+                                                <YAxis yAxisId="price" orientation="left" domain={['auto', 'auto']} tickFormatter={(v) => sym+v.toFixed(6)} tick={{ fontSize: 9, fill: '#60a5fa' }} axisLine={false} tickLine={false} width={65} />
+                                                <YAxis yAxisId="portfolio" orientation="right" domain={['dataMin - 50', 'dataMax + 50']} tickFormatter={(v) => sym+v.toFixed(0)} tick={{ fontSize: 9, fill: '#a4b596' }} axisLine={false} tickLine={false} width={45} />
+                                                
+                                                <Tooltip content={<SimTooltip selectedSimMode={selectedSimMode} sym={sym} />} cursor={{ stroke: '#a4b596', strokeDasharray: '3 3', opacity: 0.3 }} />
+                                                <Legend wrapperStyle={{ fontSize: '9px', paddingTop: '4px' }} iconSize={8} />
+                                                
+                                                <Area yAxisId="price" type="monotone" dataKey="price" stroke="#60a5fa" fill="#60a5fa" fillOpacity={0.05} strokeWidth={1} dot={false} isAnimationActive={false} />
+                                                
+                                                {simulationData.modes.map((m) => {
+                                                    const isActive = selectedSimMode === null || selectedSimMode === m.mode;
+                                                    const color = MODE_COLORS[m.mode - 1] || '#ffffff';
+                                                    
+                                                    return (
+                                                        <Line 
+                                                            key={`mode-${m.mode}`}
+                                                            yAxisId="portfolio" 
+                                                            type="stepAfter" 
+                                                            dataKey={`mode${m.mode}`} 
+                                                            name={`M${m.mode}`}
+                                                            stroke={color} 
+                                                            strokeWidth={isActive ? (m.mode >= 5 ? 2.5 : 1.5) : 1} 
+                                                            opacity={isActive ? 1 : 0.15}
+                                                            dot={false} 
+                                                            isAnimationActive={false} 
+                                                        />
+                                                    );
+                                                })}
+
+                                                {selectedSimMode && <Scatter yAxisId="price" name="Buy Order" dataKey="trade_buy" shape="cross" fill="#10b981" isAnimationActive={false} />}
+                                                {selectedSimMode && <Scatter yAxisId="price" name="Sell Order" dataKey="trade_sell" shape="cross" fill="#ef4444" isAnimationActive={false} />}
+
+                                                <Brush dataKey="time" height={12} stroke="#a4b596" fill="#141810" travellerWidth={8} tickFormatter={() => ''} />
+                                            </ComposedChart>
+                                        </ResponsiveContainer>
+                                    </div>
+                                </div>
+
+                                {/* BOTTOM SPLIT AREA */}
+                                <div className="flex-[1] flex flex-col md:flex-row gap-2 min-h-0 shrink-0 overflow-hidden">
+                                    
+                                    {/* LEFT COLUMN: TOP STATS */}
+                                    <div className="w-full md:w-[180px] shrink-0 flex flex-col gap-1.5 overflow-y-auto pr-1">
+                                        <div className="border border-[#a4b596]/30 bg-[#141810] py-1.5 px-2 glow-box flex flex-col justify-center shadow-md">
+                                            <p className="text-[7px] text-[#facc15] tracking-widest font-bold text-left">TRUE POS (ACT/PRED)</p>
+                                            <p className="text-xs text-white font-mono text-right">{simulationData.metrics.True_Pos} / {simulationData.metrics.Pred_Pos}</p>
+                                        </div>
+                                        <div className="border border-[#a4b596]/30 bg-[#141810] py-1.5 px-2 glow-box flex flex-col justify-center shadow-md">
+                                            <p className="text-[7px] text-[#60a5fa] tracking-widest font-bold text-left">TRUE NEG (ACT/PRED)</p>
+                                            <p className="text-xs text-white font-mono text-right">{simulationData.metrics.True_Neg} / {simulationData.metrics.Pred_Neg}</p>
+                                        </div>
+                                        <div className="border border-[#a4b596]/30 bg-[#141810] py-1.5 px-2 glow-box flex flex-col justify-center shadow-md">
+                                            <p className="text-[7px] text-[#a4b596] tracking-widest font-bold text-left">HOLD (ACT/PRED)</p>
+                                            <p className="text-xs text-white font-mono text-right">{simulationData.metrics.True_Hold} / {simulationData.metrics.Pred_Hold}</p>
+                                        </div>
+                                        <div className="border border-[#a4b596]/40 bg-[#3a4531]/40 py-1.5 px-2 glow-box flex flex-col justify-center shadow-md mt-1">
+                                            <p className="text-[7px] text-white tracking-widest font-bold text-left">3-CLASS WIN RATE</p>
+                                            <p className="text-xs text-white font-bold text-right">{simulationData.metrics.WinRate_3Class}%</p>
+                                        </div>
+                                        <div className="border border-[#10b981]/50 bg-[#10b981]/10 py-1.5 px-2 glow-box flex flex-col justify-center shadow-md">
+                                            <p className="text-[7px] text-[#10b981] tracking-widest font-bold text-left">ACTIONABLE WIN RATE</p>
+                                            <p className="text-xs text-[#10b981] font-bold text-right">{simulationData.metrics.WinRate_Actionable}%</p>
+                                        </div>
+                                    </div>
+
+                                    {/* RIGHT COLUMN: STRATEGY CARDS */}
+                                    <div className="flex-1 grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-1.5 overflow-y-auto pr-1 content-start pb-2">
+                                        {simulationData.modes.map((m) => {
+                                            const isSelected = selectedSimMode === m.mode;
+                                            
+                                            const bankData = m.bank !== undefined ? m.bank : (m.bank_usd || 0);
+                                            const investData = m.invested !== undefined ? m.invested : (m.invested_usd || 0);
+                                            const netEquity = bankData + investData;
+                                            
+                                            const color = MODE_COLORS[m.mode - 1] || '#ffffff';
+                                            
+                                            return (
+                                                <div 
+                                                    key={m.mode} 
+                                                    onClick={() => setSelectedSimMode(isSelected ? null : m.mode)}
+                                                    className={`border bg-[#141810] p-1.5 flex flex-col glow-box transition-all duration-300 cursor-pointer shadow-sm ${isSelected ? 'shadow-[0_0_15px_rgba(164,181,150,0.3)] bg-[rgba(164,181,150,0.05)] border-opacity-100' : 'opacity-90 hover:opacity-100 hover:border-opacity-100'}`} 
+                                                    style={{ 
+                                                        borderColor: isSelected ? color : `${color}50`,
+                                                        boxShadow: !isSelected ? `inset 0 0 0 0 transparent` : `inset 0 0 15px ${color}15`
+                                                    }}
+                                                    onMouseEnter={(e) => { if (!isSelected) e.currentTarget.style.boxShadow = `0 0 8px ${color}40`; }}
+                                                    onMouseLeave={(e) => { if (!isSelected) e.currentTarget.style.boxShadow = `none`; }}
+                                                >
+                                                    <div className="flex items-center justify-between border-b pb-1 mb-1" style={{ borderColor: `${color}30` }}>
+                                                        <div className="flex items-center gap-1 w-full">
+                                                            <div className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: color }}></div>
+                                                            <p className="text-[7px] font-bold leading-tight truncate" style={{ color: color }} title={m.description.toUpperCase()}>
+                                                                M{m.mode}: {m.description.toUpperCase()}
+                                                            </p>
+                                                        </div>
+                                                    </div>
+                                                    
+                                                    <div className="flex justify-between items-end mb-0.5">
+                                                        <p className="text-[7px] opacity-70">TOTAL PNL:</p>
+                                                        <p className={`text-[9px] font-bold ${m.pnl_pct >= 0 ? 'text-[#10b981]' : 'text-[#ef4444]'}`}>
+                                                            {m.pnl_pct > 0 ? '+' : ''}{m.pnl_pct.toFixed(2)}%
+                                                        </p>
+                                                    </div>
+                                                    <div className="flex justify-between items-end mb-1 border-b border-[#a4b596]/10 pb-1">
+                                                        <p className="text-[7px] opacity-70">TRADES EXECUTED:</p>
+                                                        <p className="text-[8px] font-mono text-white">{m.total_trades}</p>
+                                                    </div>
+                                                    
+                                                    <div className="flex justify-between items-end mb-0.5 pt-0.5">
+                                                        <p className="text-[6px] text-white opacity-90 tracking-widest">NET EQUITY:</p>
+                                                        <p className="text-[8px] font-bold text-white">{sym}{netEquity.toFixed(2)}</p>
+                                                    </div>
+                                                    <div className="flex justify-between items-end mb-0.5">
+                                                        <p className="text-[6px] opacity-50 pl-1">↳ BANK:</p>
+                                                        <p className="text-[7px] font-mono text-white">{sym}{bankData.toFixed(2)}</p>
+                                                    </div>
+                                                    <div className="flex justify-between items-end mb-1">
+                                                        <p className="text-[6px] opacity-50 pl-1">↳ INVST:</p>
+                                                        <p className="text-[7px] font-mono text-[#60a5fa]">{sym}{investData.toFixed(2)}</p>
+                                                    </div>
+
+                                                    <div className="flex justify-between items-end mb-0.5 mt-auto border-t border-[#a4b596]/10 pt-1">
+                                                        <p className="text-[6px] opacity-70 tracking-widest">REALIZED PNL:</p>
+                                                        <p className={`text-[8px] font-mono ${m.realized_pnl >= 0 ? 'text-[#10b981]' : 'text-[#ef4444]'}`}>
+                                                            {sym}{m.realized_pnl.toFixed(2)}
+                                                        </p>
+                                                    </div>
+                                                    <div className="flex justify-between items-end">
+                                                        <p className="text-[6px] opacity-70 tracking-widest">FEES PAID:</p>
+                                                        <p className="text-[8px] font-mono text-[#facc15]">{sym}{m.fees_paid.toFixed(2)}</p>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* RIGHT SIDEBAR: TRADE FEED */}
+                            <div className="w-[180px] xl:w-[220px] shrink-0 border border-[#a4b596]/30 bg-[#141810] p-2 flex flex-col glow-box min-h-0">
+                                <h2 className="text-[9px] font-bold tracking-widest text-[#d1e0c5] border-b border-[#a4b596]/30 pb-2 mb-2">LIVE TRADE FEED</h2>
+                                <div className="flex-1 overflow-y-auto pr-1 space-y-2">
+                                    {!selectedSimMode ? (
+                                        <div className="text-[8px] text-center opacity-40 mt-6 tracking-widest uppercase">
+                                            SELECT A STRATEGY MODULE<br/>TO VIEW EXECUTION LOG
+                                        </div>
+                                    ) : activeTrades.length === 0 ? (
+                                        <div className="text-[8px] text-center opacity-40 mt-6 tracking-widest uppercase">
+                                            NO TRADES EXECUTED
+                                        </div>
+                                    ) : (
+                                        activeTrades.map((trade, idx) => {
+                                            const isBuy = trade.action.includes('BUY');
+                                            return (
+                                                <div key={idx} className="border border-[#a4b596]/10 bg-[#1e2418]/50 p-1.5 flex flex-col gap-0.5">
+                                                    <div className="flex justify-between items-start">
+                                                        <span className={`text-[8px] font-bold tracking-widest ${isBuy ? 'text-[#10b981]' : 'text-[#ef4444]'}`}>
+                                                            {trade.action.replace(/_/g, ' ')}
+                                                        </span>
+                                                        <span className="opacity-50 text-[7px] font-mono">{trade.time}</span>
+                                                    </div>
+                                                    <div className="text-[9px] text-white font-mono mt-0.5">
+                                                        {trade.tokens ? trade.tokens.toFixed(2) : '--'} TKNS
+                                                        <span className="text-[#a4b596] opacity-80 ml-1">({sym}{trade.value ? trade.value.toFixed(2) : '--'})</span>
+                                                    </div>
+                                                    <div className="text-[7px] text-[#a4b596] opacity-50 font-mono">
+                                                        @ {sym}{trade.price.toFixed(6)}
+                                                    </div>
+                                                </div>
+                                            );
+                                        })
+                                    )}
+                                </div>
+                            </div>
+
+                        </div>
+                    ) : (
+                        !loading && (
+                            <div className="flex-1 flex items-center justify-center text-red-500 text-sm tracking-widest">
+                                SIMULATION DATA NOT AVAILABLE FOR {selectedModel.toUpperCase()} ({selectedDenom} | {selectedMode})
+                            </div>
+                        )
+                    )}
+                </div>
+            );
+        };
+
+        const root = createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>

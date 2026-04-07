@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SOP COMMAND: MASTER TERMINAL</title>
+    
+    <script type="importmap">
+    {
+        "imports": {
+            "react": "https://esm.sh/react@18.2.0",
+            "react-dom/client": "https://esm.sh/react-dom@18.2.0/client"
+        }
+    }
+    </script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <style>
+        body { 
+            background-color: #1e2418; 
+            color: #a4b596; 
+            margin: 0; 
+            overflow-x: hidden; 
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; 
+        }
+        .scanlines { 
+            background: linear-gradient(to bottom, rgba(255,255,255,0), rgba(255,255,255,0) 50%, rgba(0,0,0,0.15) 50%, rgba(0,0,0,0.15)); 
+            background-size: 100% 4px; 
+            pointer-events: none; 
+            position: fixed; 
+            inset: 0; 
+            z-index: 50; 
+        }
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: rgba(58, 69, 49, 0.2); }
+        ::-webkit-scrollbar-thumb { background: rgba(164, 181, 150, 0.4); }
+        .glow-box { 
+            box-shadow: inset 0 0 20px rgba(164, 181, 150, 0.03); 
+            background: rgba(20, 24, 16, 0.4); 
+            backdrop-filter: blur(4px); 
+            transition: all 0.2s ease-in-out;
+        }
+        .glow-box:hover {
+            background: rgba(58, 69, 49, 0.3);
+            box-shadow: inset 0 0 20px rgba(164, 181, 150, 0.1); 
+        }
+        .blinking-cursor::after {
+            content: "█";
+            animation: blink 1s step-end infinite;
+            margin-left: 4px;
+        }
+        @keyframes blink { 50% { opacity: 0; } }
+    </style>
+</head>
+<body>
+    <div class="scanlines"></div>
+    <div id="root"></div>
+
+    <script type="text/babel" data-type="module">
+        import React, { useState, useEffect } from 'react';
+        import { createRoot } from 'react-dom/client';
+
+        const MODULES = [
+            // DATA & TRACKING
+            { id: 'prices', title: 'ASSET PRICING ENGINE', file: 'prices_board.html', desc: 'Real-time asset price visualization and market trajectory tracking.', category: 'DATA / TRACKING', color: 'text-[#f59e0b]', border: 'border-[#f59e0b]', bgHover: 'hover:bg-[#f59e0b]/10' },
+            { id: 'pnl_anim', title: 'NETWORK PNL & FLOW', file: 'pnl_animation.html', desc: 'Profitability distributions, stack flows, and supply allocation dynamics.', category: 'DATA / TRACKING', color: 'text-[#3b82f6]', border: 'border-[#3b82f6]', bgHover: 'hover:bg-[#3b82f6]/10' },
+            { id: 'users', title: 'USER ASSET TRACKER', file: 'users.html', desc: 'Individual wallet profitability, history, and dumping alerts.', category: 'DATA / TRACKING', color: 'text-[#10b981]', border: 'border-[#10b981]', bgHover: 'hover:bg-[#10b981]/10' },
+            { id: 'pressure', title: '24H RESIDUAL PRESSURE', file: 'pressure.html', desc: 'Active holder population tracking and 24-hour market residual analysis.', category: 'DATA / TRACKING', color: 'text-[#06b6d4]', border: 'border-[#06b6d4]', bgHover: 'hover:bg-[#06b6d4]/10' },
+            
+            // ML / FEATURES
+            { id: 'invariants', title: 'INVARIANT TERMINAL', file: 'features.html', desc: 'Feature engineering statistics, R² scoring, and variable distributions.', category: 'ML / FEATURES', color: 'text-[#c084fc]', border: 'border-[#c084fc]', bgHover: 'hover:bg-[#c084fc]/10' },
+            { id: 'eda', title: 'FEATURE EDA DASHBOARD', file: 'eda_board.html', desc: 'Interactive PCA embeddings, robust feature histograms, and correlation matrices.', category: 'ML / FEATURES', color: 'text-[#a855f7]', border: 'border-[#a855f7]', bgHover: 'hover:bg-[#a855f7]/10' },
+            { id: 'decomp', title: 'CHRONOS DECOMPOSITION', file: 'decomposition.html', desc: 'Time-series decomposition analyzing trend, seasonality, and market residuals.', category: 'ML / FEATURES', color: 'text-[#ec4899]', border: 'border-[#ec4899]', bgHover: 'hover:bg-[#ec4899]/10' },
+            { id: 'tslm', title: 'TSLM SIMULATION', file: 'tslm_simulation.html', desc: 'Time-Series Linear Model forecast simulations and failure distribution analysis.', category: 'ML / FEATURES', color: 'text-[#8b5cf6]', border: 'border-[#8b5cf6]', bgHover: 'hover:bg-[#8b5cf6]/10' },
+            
+            // INFERENCE / TRADING
+            { id: 'inference', title: 'ML EVALUATION TERMINAL', file: 'inference.html', desc: 'Model accuracy matrices, precision/recall stats, and deployment viability.', category: 'INFERENCE / TRADING', color: 'text-[#f87171]', border: 'border-[#f87171]', bgHover: 'hover:bg-[#f87171]/10' },
+            { id: 'oracle', title: 'HF TRADING ORACLE', file: 'oracle.html', desc: 'High-frequency trading simulation engine and algorithmic strategy PnL.', category: 'INFERENCE / TRADING', color: 'text-[#facc15]', border: 'border-[#facc15]', bgHover: 'hover:bg-[#facc15]/10' },
+            { id: 'rl', title: 'BAYESIAN RL PREDICTABILITY', file: 'reinforcement.html', desc: 'Bayesian Reinforcement Learning mapping action probabilities and greedy policies.', category: 'INFERENCE / TRADING', color: 'text-[#14b8a6]', border: 'border-[#14b8a6]', bgHover: 'hover:bg-[#14b8a6]/10' },
+            { id: 'arma', title: 'ARMA PERFORMANCE TERMINAL', file: 'arma.html', desc: 'ARMA time-series forecasting and ATM Call Price tracking metrics.', category: 'INFERENCE / TRADING', color: 'text-[#f97316]', border: 'border-[#f97316]', bgHover: 'hover:bg-[#f97316]/10' },
+        ];
+
+        const App = () => {
+            const [bootText, setBootText] = useState('');
+            const fullText = "INITIALIZING SOP MASTER TERMINAL...";
+
+            useEffect(() => {
+                let i = 0;
+                const interval = setInterval(() => {
+                    setBootText(fullText.substring(0, i));
+                    i++;
+                    if (i > fullText.length) clearInterval(interval);
+                }, 30);
+                return () => clearInterval(interval);
+            }, []);
+
+            const groupedModules = MODULES.reduce((acc, mod) => {
+                if (!acc[mod.category]) acc[mod.category] = [];
+                acc[mod.category].push(mod);
+                return acc;
+            }, {});
+
+            return (
+                <div className="min-h-screen flex flex-col p-6 z-10 relative max-w-6xl mx-auto">
+                    
+                    <header className="border-b border-[#a4b596]/50 pb-4 mb-8">
+                        <div className="flex justify-between items-end">
+                            <div>
+                                <h1 className="text-3xl font-bold tracking-widest text-[#d1e0c5] drop-shadow-[0_0_8px_rgba(209,224,197,0.5)]">
+                                    SOP COMMAND CENTER
+                                </h1>
+                                <p className="text-xs uppercase opacity-70 mt-2 tracking-widest blinking-cursor text-[#a4b596]">
+                                    {bootText}
+                                </p>
+                            </div>
+                            <div className="text-right">
+                                <p className="text-[10px] uppercase opacity-50 tracking-widest">SYSTEM STATUS</p>
+                                <p className="text-xs text-[#10b981] font-bold tracking-widest drop-shadow-[0_0_5px_rgba(16,185,129,0.5)]">ONLINE</p>
+                            </div>
+                        </div>
+                    </header>
+
+                    <div className="flex-1 flex flex-col gap-10">
+                        {Object.entries(groupedModules).map(([category, mods]) => (
+                            <section key={category}>
+                                <h2 className="text-sm font-bold tracking-widest opacity-60 mb-4 border-b border-[#a4b596]/20 pb-1 inline-block">
+                                    [{category}]
+                                </h2>
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                                    {mods.map((mod) => (
+                                        <a 
+                                            key={mod.id} 
+                                            href={mod.file}
+                                            className={`block border border-[#a4b596]/30 p-5 glow-box flex flex-col h-full cursor-pointer relative group ${mod.bgHover}`}
+                                        >
+                                            <div className={`absolute top-0 left-0 w-1 h-full ${mod.border} opacity-50 group-hover:opacity-100 transition-opacity`}></div>
+                                            
+                                            <div className="flex justify-between items-start mb-3 pl-2">
+                                                <h3 className={`text-sm font-bold tracking-widest ${mod.color}`}>
+                                                    {mod.title}
+                                                </h3>
+                                                <span className="text-[10px] opacity-40 group-hover:opacity-100 transition-opacity">↗</span>
+                                            </div>
+                                            
+                                            <p className="text-xs opacity-70 leading-relaxed pl-2 flex-1">
+                                                {mod.desc}
+                                            </p>
+
+                                            <div className="mt-4 pt-3 border-t border-[#a4b596]/10 text-[9px] opacity-40 uppercase tracking-widest pl-2 flex justify-between">
+                                                <span>MODULE: {mod.file}</span>
+                                                <span className={`group-hover:${mod.color} group-hover:opacity-100 transition-all`}>ACCESS &gt;</span>
+                                            </div>
+                                        </a>
+                                    ))}
+                                </div>
+                            </section>
+                        ))}
+                    </div>
+
+                    <footer className="mt-12 text-[10px] border-t border-[#a4b596]/50 pt-4 flex justify-between opacity-50 tracking-widest uppercase">
+                        <span>DUNE ANALYTICS | AVALANCHE NETWORK</span>
+                        <span>made by t</span>
+                    </footer>
+                </div>
+            );
+        };
+
+        const root = createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>

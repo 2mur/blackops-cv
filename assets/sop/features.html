@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SOP INVARIANT TERMINAL</title>
+    
+    <script type="importmap">
+    {
+        "imports": {
+            "react": "https://esm.sh/react@18.2.0",
+            "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+            "recharts": "https://esm.sh/recharts@2.12.2?deps=react@18.2.0,react-dom@18.2.0"
+        }
+    }
+    </script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <style>
+        body { 
+            background-color: #1e2418; color: #a4b596; margin: 0; overflow: hidden; 
+            text-shadow: 0 0 2px rgba(164, 181, 150, 0.4); 
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; 
+        }
+        .scanlines { 
+            background: linear-gradient(to bottom, rgba(255, 255, 255, 0), rgba(255, 255, 255, 0) 50%, rgba(0, 0, 0, 0.15) 50%, rgba(0, 0, 0, 0.15)); 
+            background-size: 100% 4px; pointer-events: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 50; 
+        }
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: rgba(58, 69, 49, 0.2); border-left: 1px solid rgba(164, 181, 150, 0.2); }
+        ::-webkit-scrollbar-thumb { background: rgba(164, 181, 150, 0.4); }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(164, 181, 150, 0.6); }
+        .crt-flicker { animation: flicker 0.15s infinite; }
+        @keyframes flicker { 0% { opacity: 0.95; } 50% { opacity: 1; } 100% { opacity: 0.98; } }
+        .blinking-cursor::after { content: '_'; animation: blink 1s step-end infinite; }
+        @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+        .glow-box { box-shadow: inset 0 0 20px rgba(164, 181, 150, 0.03); background: rgba(20, 24, 16, 0.4); backdrop-filter: blur(4px); }
+        select { 
+            appearance: none; background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23a4b596' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e"); 
+            background-repeat: no-repeat; background-position: right 0.5rem center; background-size: 1em; padding-right: 2rem !important; 
+        }
+    </style>
+</head>
+
+<body>
+    <div class="scanlines"></div>
+    <div id="root"></div>
+
+    <script type="text/babel" data-type="module">
+        import React, { useState, useEffect, useMemo } from 'react';
+        import { createRoot } from 'react-dom/client';
+        import { ComposedChart, Line, AreaChart, Area, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
+
+        const COLORS = { '3d': '#7ba6d1', '7d': '#86c29c', '14d': '#d1be77', '30d': '#dba769' };
+        const REF_RED = '#d17373';
+        const REF_GREEN = '#82ba97';
+        const PERIODS = ['3d', '7d', '14d', '30d'];
+        
+        const BIN_LABELS = ['<-95%', '-95_to_-75', '-75_to_-50', '-50_to_-25', '-25_to_0', '0_to_25', '25_to_100', '100_to_200', '200_to_500', '>500%'];
+        const BIN_COLORS = ['#4a1c1c', '#8c3333', '#b56a6a', '#d69e9e', '#e8caca', '#cce8d6', '#9ed6b8', '#6e967d', '#4a755b', '#153020'];
+
+        const ToggleButton = ({ label, active, onClick, color }) => (
+            <button onClick={onClick} style={{ borderColor: color, backgroundColor: active ? color : 'transparent', color: active ? '#1e2418' : color }} className="px-2 py-0.5 text-[9px] border font-bold transition-colors uppercase tracking-widest mr-2 mb-1 cursor-pointer">
+                {label}
+            </button>
+        );
+
+        const App = () => {
+            const [payload, setPayload] = useState(null);
+            const [activeDenom, setActiveDenom] = useState('usd');
+            const [selectedRes, setSelectedRes] = useState('1h');
+            const [selectedWindow, setSelectedWindow] = useState('ALL');
+            const [availableWindows, setAvailableWindows] = useState([]);
+            
+            const [scaleMode, setScaleMode] = useState('price'); 
+            const [useTanhDist, setUseTanhDist] = useState(false);
+            const [useTanhMom, setUseTanhMom] = useState(false);
+
+            const [actDistMA, setActDistMA] = useState({ '14d': true, '30d': true });
+            const [actBB, setActBB] = useState({});
+            const [actMom, setActMom] = useState({ '14d': true });
+            const [actVol, setActVol] = useState({ '12h': true });
+            const [actRSI, setActRSI] = useState({ '14d': true });
+            const [actStoch, setActStoch] = useState({ '14d': true });
+            
+            const [actTurnover, setActTurnover] = useState('total_bps');
+            const [actRisk, setActRisk] = useState('hazard_risk');
+            const [actMacro, setActMacro] = useState('nupl');
+            const [actFlow, setActFlow] = useState('tx_count');
+
+            const toggleState = (stateObj, setter, key) => setter(prev => ({ ...prev, [key]: !prev[key] }));
+
+            useEffect(() => {
+                fetch('data/features.json')
+                    .then(res => res.json())
+                    .then(data => {
+                        setPayload(data);
+                        const windowsSet = new Set();
+                        
+                        ['usd', 'native'].forEach(denom => {
+                            ['1h', '6h', '1d', '3d', '7d', '14d'].forEach(resName => {
+                                if(data.data[denom] && data.data[denom][resName]) {
+                                    data.data[denom][resName].forEach(row => {
+                                        if (row.time) {
+                                            const yr = row.time.substring(0, 4);
+                                            const mo = parseInt(row.time.substring(5, 7), 10);
+                                            row.window = `${yr}-${mo <= 6 ? 'H1' : 'H2'}`;
+                                            windowsSet.add(row.window);
+                                        }
+                                        const pCol = denom === 'usd' ? 'token_price_usd' : 'token_price_native';
+                                        if(row[pCol] > 0) row.log_price = Math.log(row[pCol]);
+                                    });
+                                }
+                            });
+                        });
+
+                        const sortedWindows = Array.from(windowsSet).sort();
+                        setAvailableWindows(sortedWindows);
+                        if (sortedWindows.length > 0) setSelectedWindow(sortedWindows[sortedWindows.length - 1]);
+                    })
+                    .catch(err => console.error("Error loading JSON:", err));
+            }, []);
+
+            const displayData = useMemo(() => {
+                if (!payload || !payload.data[activeDenom] || !payload.data[activeDenom][selectedRes]) return [];
+                const baseArray = payload.data[activeDenom][selectedRes];
+                const filtered = selectedWindow === 'ALL' ? baseArray : baseArray.filter(d => d.window === selectedWindow);
+                
+                const binPrefix = activeDenom === 'usd' ? 'usd_bin_' : 'native_bin_';
+
+                return filtered.map(d => {
+                    const newD = { ...d };
+                    let totalBin = 0;
+                    BIN_LABELS.forEach(b => { totalBin += (newD[binPrefix + b] || 0); });
+                    
+                    BIN_LABELS.forEach(b => {
+                        newD[`pct_bin_${b}`] = totalBin > 0 ? ((newD[binPrefix + b] || 0) / totalBin) * 100 : 0;
+                    });
+                    return newD;
+                });
+            }, [payload, activeDenom, selectedRes, selectedWindow]);
+
+            if (!payload) return <div className="h-screen flex items-center justify-center font-mono crt-flicker">INITIALIZING SCALE-INVARIANT MATRICES <span className="blinking-cursor"></span></div>;
+
+            const priceKey = activeDenom === 'usd' ? 'token_price_usd' : 'token_price_native';
+            const activePriceDataKey = scaleMode === 'price' ? priceKey : 'log_price';
+            const tanhSuffixDist = useTanhDist ? '_tanh' : '';
+            const tanhSuffixMom = useTanhMom ? '_tanh' : '';
+
+            return (
+                <div className="h-screen flex font-mono bg-[#1e2418] text-[#a4b596] crt-flicker relative z-10">
+                    <div className="w-12 border-r border-[#a4b596]/30 flex flex-col items-center py-4 bg-[#141810] shrink-0">
+                        <div className="text-[10px] transform -rotate-90 tracking-widest mt-12 opacity-50 whitespace-nowrap">SYS.OP.REQ. 0x8A9F</div>
+                    </div>
+
+                    <div className="flex-1 flex flex-col p-4 overflow-y-auto overflow-x-hidden gap-4">
+                        <header className="flex justify-between items-end border-b border-[#a4b596]/50 pb-3 shrink-0">
+                            <div>
+                                <h1 className="text-2xl font-bold tracking-widest text-[#d1e0c5]">SOP INVARIANT TERMINAL</h1>
+                                <p className="text-xs opacity-70 mt-1 tracking-widest">ML-READY SCALE-INVARIANT FEATURE ENGINEERING</p>
+                            </div>
+                            <div className="flex flex-col items-end gap-2 text-xs">
+                                <div className="text-[#b8a86c] font-bold tracking-widest">
+                                    SYS.STATUS: <span className="text-[#6e967d]">ONLINE</span>
+                                </div>
+                                <div className="flex items-center gap-3 mt-1">
+                                    
+                                    {/* Denom Toggle */}
+                                    <div className="flex border border-[#a4b596]/30 bg-[#141810]">
+                                        <button onClick={() => setActiveDenom('usd')} className={`px-3 py-1 text-[10px] font-bold ${activeDenom === 'usd' ? 'bg-[#a4b596] text-[#1e2418]' : 'text-[#a4b596] hover:bg-[#3a4531]'}`}>USD BASE</button>
+                                        <button onClick={() => setActiveDenom('native')} className={`px-3 py-1 text-[10px] font-bold ${activeDenom === 'native' ? 'bg-[#a4b596] text-[#1e2418]' : 'text-[#a4b596] hover:bg-[#3a4531]'}`}>NATIVE</button>
+                                    </div>
+                                    
+                                    {/* Resolution Set Toggle */}
+                                    <div className="flex border border-[#a4b596]/30 bg-[#141810]">
+                                        {['1h', '6h', '1d', '3d', '7d', '14d'].map(res => (
+                                            <button key={res} onClick={() => setSelectedRes(res)} className={`px-2 py-1 text-[10px] font-bold ${selectedRes === res ? 'bg-[#b8a86c] text-[#1e2418]' : 'text-[#b8a86c] hover:bg-[#3a4531]'}`}>{res.toUpperCase()}</button>
+                                        ))}
+                                    </div>
+
+                                    {/* Scale Toggle */}
+                                    <div className="flex border border-[#a4b596]/30 bg-[#141810]">
+                                        <button onClick={() => setScaleMode('price')} className={`px-3 py-1 text-[10px] font-bold ${scaleMode === 'price' ? 'bg-[#a4b596] text-[#1e2418]' : 'text-[#a4b596] hover:bg-[#3a4531]'}`}>LIN</button>
+                                        <button onClick={() => setScaleMode('log_price')} className={`px-3 py-1 text-[10px] font-bold ${scaleMode === 'log_price' ? 'bg-[#a4b596] text-[#1e2418]' : 'text-[#a4b596] hover:bg-[#3a4531]'}`}>LOG</button>
+                                    </div>
+
+                                    <select 
+                                        value={selectedWindow} 
+                                        onChange={e => setSelectedWindow(e.target.value)} 
+                                        className="bg-[#141810] border border-[#a4b596]/50 py-1 px-2 text-[10px] font-bold outline-none hover:bg-[#3a4531] cursor-pointer"
+                                    >
+                                        <option value="ALL">ALL DATA</option>
+                                        {availableWindows.map(w => <option key={w} value={w}>{w}</option>)}
+                                    </select>
+                                </div>
+                            </div>
+                        </header>
+
+                        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                            
+                            {/* 1. DISTANCE & VALUATION */}
+                            <div className="border border-[#a4b596]/30 bg-[#141810] p-4 glow-box flex flex-col min-h-[350px] relative">
+                                <div className="absolute top-4 right-4 flex z-10 gap-2">
+                                    <button onClick={() => setUseTanhDist(!useTanhDist)} className={`px-2 py-1 text-[9px] border transition-colors ${useTanhDist ? 'bg-[#6e967d] text-[#1e2418] border-[#6e967d]' : 'border-[#6e967d] text-[#6e967d] hover:bg-[#6e967d]/10'}`}>
+                                        TANH: {useTanhDist ? 'ON' : 'OFF'}
+                                    </button>
+                                </div>
+                                <div className="mb-3 shrink-0 pr-32">
+                                    <p className="text-xs uppercase opacity-70 tracking-widest mb-2 text-[#6e967d] font-bold">RELATIVE DISTANCE TO M.A. / WIDTH</p>
+                                    <div className="flex flex-wrap items-center">
+                                        <span className="text-[10px] opacity-50 mr-2 py-0.5">DIST:</span>
+                                        {PERIODS.map(p => <ToggleButton key={`d_${p}`} label={p} active={actDistMA[p]} color={COLORS[p]} onClick={() => toggleState(actDistMA, setActDistMA, p)} />)}
+                                        <span className="text-[10px] opacity-50 ml-2 mr-2 py-0.5 border-l border-[#a4b596]/20 pl-4">BBW:</span>
+                                        {PERIODS.map(p => <ToggleButton key={`bb_${p}`} label={p} active={actBB[p]} color={COLORS[p]} onClick={() => toggleState(actBB, setActBB, p)} />)}
+                                    </div>
+                                </div>
+                                <div className="flex-1 min-h-0 relative">
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <ComposedChart data={displayData}>
+                                            <CartesianGrid strokeDasharray="3 4" stroke="#a4b596" opacity={0.1} />
+                                            <XAxis dataKey="time" hide />
+                                            <YAxis yAxisId="metric" domain={['auto', 'auto']} tick={{ fontSize: 10, fill: '#a4b596' }} axisLine={false} tickLine={false} width={40} />
+                                            <YAxis yAxisId="price" orientation="right" domain={['auto', 'auto']} hide />
+                                            <Tooltip contentStyle={{backgroundColor: '#141810', borderColor: '#a4b596', fontSize: '11px'}} />
+                                            <ReferenceLine yAxisId="metric" y={0} stroke="#a4b596" strokeDasharray="3 3" opacity={0.4} />
+                                            <Line yAxisId="price" type="monotone" dataKey={activePriceDataKey} stroke="#a4b596" strokeWidth={1} dot={false} isAnimationActive={false} opacity={0.2} />
+                                            {PERIODS.map(p => actDistMA[p] && <Line yAxisId="metric" key={`l_d_${p}`} type="monotone" dataKey={`dist_to_ma_${p}${tanhSuffixDist}`} stroke={COLORS[p]} strokeWidth={1.5} dot={false} isAnimationActive={false} />)}
+                                            {PERIODS.map(p => actBB[p] && <Line yAxisId="metric" key={`l_b_${p}`} type="monotone" dataKey={`bb_width_${p}${tanhSuffixDist}`} stroke={COLORS[p]} strokeDasharray="4 4" strokeWidth={1.5} dot={false} isAnimationActive={false} opacity={0.7} />)}
+                                        </ComposedChart>
+                                    </ResponsiveContainer>
+                                </div>
+                            </div>
+
+                            {/* 2. MOMENTUM & VOLATILITY */}
+                            <div className="border border-[#a4b596]/30 bg-[#141810] p-4 glow-box flex flex-col min-h-[350px] relative">
+                                <div className="absolute top-4 right-4 flex z-10 gap-2">
+                                    <button onClick={() => setUseTanhMom(!useTanhMom)} className={`px-2 py-1 text-[9px] border transition-colors ${useTanhMom ? 'bg-[#8c74a3] text-[#1e2418] border-[#8c74a3]' : 'border-[#8c74a3] text-[#8c74a3] hover:bg-[#8c74a3]/10'}`}>
+                                        TANH: {useTanhMom ? 'ON' : 'OFF'}
+                                    </button>
+                                </div>
+                                <div className="mb-3 shrink-0 pr-32">
+                                    <p className="text-xs uppercase opacity-70 tracking-widest mb-2 text-[#8c74a3] font-bold">LOG MOMENTUM & VOLATILITY</p>
+                                    <div className="flex flex-wrap items-center">
+                                        <span className="text-[10px] opacity-50 mr-2 py-0.5">MOM:</span>
+                                        {PERIODS.map(p => <ToggleButton key={`m_${p}`} label={p} active={actMom[p]} color={COLORS[p]} onClick={() => toggleState(actMom, setActMom, p)} />)}
+                                        <span className="text-[10px] opacity-50 ml-2 mr-2 py-0.5 border-l border-[#a4b596]/20 pl-4">VOL:</span>
+                                        <ToggleButton label="12H" active={actVol['12h']} color={COLORS['3d']} onClick={() => toggleState(actVol, setActVol, '12h')} />
+                                        <ToggleButton label="24H" active={actVol['24h']} color={COLORS['7d']} onClick={() => toggleState(actVol, setActVol, '24h')} />
+                                    </div>
+                                </div>
+                                <div className="flex-1 min-h-0 relative">
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <ComposedChart data={displayData}>
+                                            <CartesianGrid strokeDasharray="3 4" stroke="#a4b596" opacity={0.1} />
+                                            <XAxis dataKey="time" hide />
+                                            <YAxis yAxisId="metric" domain={['auto', 'auto']} tick={{ fontSize: 10, fill: '#a4b596' }} axisLine={false} tickLine={false} width={40} />
+                                            <YAxis yAxisId="price" orientation="right" domain={['auto', 'auto']} hide />
+                                            <Tooltip contentStyle={{backgroundColor: '#141810', borderColor: '#a4b596', fontSize: '11px'}} />
+                                            <ReferenceLine yAxisId="metric" y={0} stroke="#a4b596" opacity={0.5} />
+                                            <Line yAxisId="price" type="monotone" dataKey={activePriceDataKey} stroke="#a4b596" strokeWidth={1} dot={false} isAnimationActive={false} opacity={0.2} />
+                                            {PERIODS.map(p => actMom[p] && <Line yAxisId="metric" key={`l_m_${p}`} type="monotone" dataKey={`log_mom_${p}${tanhSuffixMom}`} stroke={COLORS[p]} strokeWidth={2} dot={false} isAnimationActive={false} />)}
+                                            {actVol['12h'] && <Area yAxisId="metric" type="monotone" dataKey="volatility_12h" fill={COLORS['3d']} stroke={COLORS['3d']} opacity={0.3} isAnimationActive={false} />}
+                                            {actVol['24h'] && <Area yAxisId="metric" type="monotone" dataKey="volatility_24h" fill={COLORS['7d']} stroke={COLORS['7d']} opacity={0.2} isAnimationActive={false} />}
+                                        </ComposedChart>
+                                    </ResponsiveContainer>
+                                </div>
+                            </div>
+
+                            {/* 3. OSCILLATORS */}
+                            <div className="border border-[#a4b596]/30 bg-[#141810] p-4 glow-box flex flex-col min-h-[350px]">
+                                <div className="mb-3 shrink-0">
+                                    <p className="text-xs uppercase opacity-70 tracking-widest mb-2 text-[#b8a86c] font-bold">OSCILLATORS (0-100 BOUNDED)</p>
+                                    <div className="flex flex-wrap items-center">
+                                        <span className="text-[10px] opacity-50 mr-2 py-0.5">RSI:</span>
+                                        {PERIODS.map(p => <ToggleButton key={`r_${p}`} label={p} active={actRSI[p]} color={COLORS[p]} onClick={() => toggleState(actRSI, setActRSI, p)} />)}
+                                        <span className="text-[10px] opacity-50 ml-2 mr-2 py-0.5 border-l border-[#a4b596]/20 pl-4">STOCH:</span>
+                                        {PERIODS.map(p => <ToggleButton key={`s_${p}`} label={p} active={actStoch[p]} color={COLORS[p]} onClick={() => toggleState(actStoch, setActStoch, p)} />)}
+                                    </div>
+                                </div>
+                                <div className="flex-1 min-h-0 relative">
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <ComposedChart data={displayData}>
+                                            <CartesianGrid strokeDasharray="3 4" stroke="#a4b596" opacity={0.1} />
+                                            <XAxis dataKey="time" hide />
+                                            <YAxis yAxisId="metric" domain={[0, 100]} ticks={[0, 20, 30, 70, 80, 100]} tick={{ fontSize: 10, fill: '#a4b596' }} axisLine={false} tickLine={false} width={40} />
+                                            <YAxis yAxisId="price" orientation="right" domain={['auto', 'auto']} hide />
+                                            <Tooltip contentStyle={{backgroundColor: '#141810', borderColor: '#a4b596', fontSize: '11px'}} />
+                                            <ReferenceLine yAxisId="metric" y={80} stroke={REF_RED} strokeDasharray="2 4" opacity={0.3} />
+                                            <ReferenceLine yAxisId="metric" y={70} stroke={REF_RED} strokeDasharray="2 4" opacity={0.5} />
+                                            <ReferenceLine yAxisId="metric" y={30} stroke={REF_GREEN} strokeDasharray="2 4" opacity={0.5} />
+                                            <ReferenceLine yAxisId="metric" y={20} stroke={REF_GREEN} strokeDasharray="2 4" opacity={0.3} />
+                                            <Line yAxisId="price" type="monotone" dataKey={activePriceDataKey} stroke="#a4b596" strokeWidth={1} dot={false} isAnimationActive={false} opacity={0.2} />
+                                            {PERIODS.map(p => actRSI[p] && <Line yAxisId="metric" key={`l_r_${p}`} type="monotone" dataKey={`rsi_${p}`} stroke={COLORS[p]} strokeWidth={2} dot={false} isAnimationActive={false} />)}
+                                            {PERIODS.map(p => actStoch[p] && <Line yAxisId="metric" key={`l_s_${p}`} type="monotone" dataKey={`stoch_${p}`} stroke={COLORS[p]} strokeDasharray="4 4" strokeWidth={1.5} dot={false} isAnimationActive={false} opacity={0.8} />)}
+                                        </ComposedChart>
+                                    </ResponsiveContainer>
+                                </div>
+                            </div>
+
+                            {/* 4. NETWORK TURNOVER */}
+                            <div className="border border-[#a4b596]/30 bg-[#141810] p-4 glow-box flex flex-col min-h-[350px] relative">
+                                <div className="absolute top-4 right-4 flex z-10 gap-2">
+                                    <button onClick={() => setActTurnover('total_bps')} className={`px-2 py-1 text-[9px] border transition-colors ${actTurnover === 'total_bps' ? `bg-[${REF_RED}] text-[#1e2418] border-[${REF_RED}]` : `border-[${REF_RED}] text-[${REF_RED}] hover:bg-[${REF_RED}]/10`}`}>TOTAL BPS</button>
+                                    <button onClick={() => setActTurnover('net_bps')} className={`px-2 py-1 text-[9px] border transition-colors ${actTurnover === 'net_bps' ? `bg-[${REF_RED}] text-[#1e2418] border-[${REF_RED}]` : `border-[${REF_RED}] text-[${REF_RED}] hover:bg-[${REF_RED}]/10`}`}>NET BPS</button>
+                                    <button onClick={() => setActTurnover('order_imbalance')} className={`px-2 py-1 text-[9px] border transition-colors ${actTurnover === 'order_imbalance' ? `bg-[${REF_RED}] text-[#1e2418] border-[${REF_RED}]` : `border-[${REF_RED}] text-[${REF_RED}] hover:bg-[${REF_RED}]/10`}`}>IMBAL</button>
+                                </div>
+                                <div className="mb-3 shrink-0 pr-60">
+                                    <p className="text-xs uppercase opacity-70 tracking-widest text-[#b56a6a] font-bold">NETWORK TURNOVER</p>
+                                </div>
+                                <div className="flex-1 min-h-0 relative">
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <ComposedChart data={displayData}>
+                                            <CartesianGrid strokeDasharray="3 4" stroke="#a4b596" opacity={0.1} />
+                                            <XAxis dataKey="time" hide />
+                                            <YAxis yAxisId="metric" domain={['auto', 'auto']} tick={{ fontSize: 10, fill: REF_RED }} tickFormatter={(v) => v.toFixed(3)} axisLine={false} tickLine={false} width={50} />
+                                            <YAxis yAxisId="price" orientation="right" domain={['auto', 'auto']} hide />
+                                            <Tooltip contentStyle={{backgroundColor: '#141810', borderColor: REF_RED, fontSize: '11px'}} formatter={(v) => v.toFixed(3)} />
+                                            {actTurnover === 'order_imbalance' && <ReferenceLine yAxisId="metric" y={0} stroke="#a4b596" opacity={0.5} />}
+                                            <Line yAxisId="price" type="monotone" dataKey={activePriceDataKey} stroke="#a4b596" strokeWidth={1} dot={false} isAnimationActive={false} opacity={0.2} />
+                                            {(actTurnover === 'total_bps' || actTurnover === 'net_bps') ? (
+                                                <Bar yAxisId="metric" dataKey={actTurnover} fill={REF_RED} opacity={0.5} isAnimationActive={false} />
+                                            ) : (
+                                                <Area yAxisId="metric" type="monotone" dataKey={actTurnover} fill={REF_RED} stroke={REF_RED} strokeWidth={2} opacity={0.3} isAnimationActive={false} />
+                                            )}
+                                        </ComposedChart>
+                                    </ResponsiveContainer>
+                                </div>
+                            </div>
+
+                            {/* 5. RISK FACTORS */}
+                            <div className="border border-[#a4b596]/30 bg-[#141810] p-4 glow-box flex flex-col min-h-[350px] relative">
+                                <div className="absolute top-4 right-4 flex z-10 gap-2">
+                                    <button onClick={() => setActRisk('hazard_risk')} className={`px-2 py-1 text-[9px] border transition-colors ${actRisk === 'hazard_risk' ? `bg-[${COLORS['3d']}] text-[#1e2418] border-[${COLORS['3d']}]` : `border-[${COLORS['3d']}] text-[${COLORS['3d']}] hover:bg-[${COLORS['3d']}]/10`}`}>HAZARD</button>
+                                    <button onClick={() => setActRisk('risk_linear')} className={`px-2 py-1 text-[9px] border transition-colors ${actRisk === 'risk_linear' ? `bg-[${COLORS['3d']}] text-[#1e2418] border-[${COLORS['3d']}]` : `border-[${COLORS['3d']}] text-[${COLORS['3d']}] hover:bg-[${COLORS['3d']}]/10`}`}>LIN RISK</button>
+                                    <button onClick={() => setActRisk('risk_quadratic')} className={`px-2 py-1 text-[9px] border transition-colors ${actRisk === 'risk_quadratic' ? `bg-[${COLORS['3d']}] text-[#1e2418] border-[${COLORS['3d']}]` : `border-[${COLORS['3d']}] text-[${COLORS['3d']}] hover:bg-[${COLORS['3d']}]/10`}`}>QUAD RISK</button>
+                                    <button onClick={() => setActRisk('profit_loss_ratio')} className={`px-2 py-1 text-[9px] border transition-colors ${actRisk === 'profit_loss_ratio' ? `bg-[${COLORS['3d']}] text-[#1e2418] border-[${COLORS['3d']}]` : `border-[${COLORS['3d']}] text-[${COLORS['3d']}] hover:bg-[${COLORS['3d']}]/10`}`}>P/L RATIO</button>
+                                    <button onClick={() => setActRisk('pct_in_profit')} className={`px-2 py-1 text-[9px] border transition-colors ${actRisk === 'pct_in_profit' ? `bg-[${COLORS['3d']}] text-[#1e2418] border-[${COLORS['3d']}]` : `border-[${COLORS['3d']}] text-[${COLORS['3d']}] hover:bg-[${COLORS['3d']}]/10`}`}>% IN PROFIT</button>
+                                </div>
+                                <div className="mb-3 shrink-0 pr-64">
+                                    <p className="text-xs uppercase opacity-70 tracking-widest text-[#6b8cae] font-bold">SYSTEMIC PNL RISK</p>
+                                </div>
+                                <div className="flex-1 min-h-0 relative">
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <ComposedChart data={displayData}>
+                                            <CartesianGrid strokeDasharray="3 4" stroke="#a4b596" opacity={0.1} />
+                                            <XAxis dataKey="time" hide />
+                                            <YAxis yAxisId="metric" domain={['auto', 'auto']} tick={{ fontSize: 10, fill: COLORS['3d'] }} tickFormatter={(v) => v.toFixed(3)} axisLine={false} tickLine={false} width={40} />
+                                            <YAxis yAxisId="price" orientation="right" domain={['auto', 'auto']} hide />
+                                            <Tooltip contentStyle={{backgroundColor: '#141810', borderColor: COLORS['3d'], fontSize: '11px'}} />
+                                            {actRisk !== 'profit_loss_ratio' && <ReferenceLine yAxisId="metric" y={0} stroke="#a4b596" opacity={0.5} />}
+                                            {actRisk === 'profit_loss_ratio' && <ReferenceLine yAxisId="metric" y={1.0} stroke="#a4b596" strokeDasharray="3 3" opacity={0.5} />}
+                                            <Line yAxisId="price" type="monotone" dataKey={activePriceDataKey} stroke="#a4b596" strokeWidth={1} dot={false} isAnimationActive={false} opacity={0.2} />
+                                            <Area yAxisId="metric" type="stepAfter" dataKey={actRisk} fill={COLORS['3d']} stroke={COLORS['3d']} strokeWidth={2} opacity={0.3} isAnimationActive={false} />
+                                        </ComposedChart>
+                                    </ResponsiveContainer>
+                                </div>
+                            </div>
+
+                            {/* 6. NUPL */}
+                            <div className="border border-[#a4b596]/30 bg-[#141810] p-4 glow-box flex flex-col min-h-[350px] relative">
+                                <div className="absolute top-4 right-4 flex z-10 gap-2">
+                                    <button onClick={() => setActMacro('nupl')} className={`px-2 py-1 text-[9px] border transition-colors ${actMacro === 'nupl' ? `bg-[${COLORS['14d']}] text-[#1e2418] border-[${COLORS['14d']}]` : `border-[${COLORS['14d']}] text-[${COLORS['14d']}] hover:bg-[${COLORS['14d']}]/10`}`}>BASE</button>
+                                    <button onClick={() => setActMacro('nupl_1d')} className={`px-2 py-1 text-[9px] border transition-colors ${actMacro === 'nupl_1d' ? `bg-[${COLORS['14d']}] text-[#1e2418] border-[${COLORS['14d']}]` : `border-[${COLORS['14d']}] text-[${COLORS['14d']}] hover:bg-[${COLORS['14d']}]/10`}`}>1D</button>
+                                    <button onClick={() => setActMacro('nupl_3d')} className={`px-2 py-1 text-[9px] border transition-colors ${actMacro === 'nupl_3d' ? `bg-[${COLORS['14d']}] text-[#1e2418] border-[${COLORS['14d']}]` : `border-[${COLORS['14d']}] text-[${COLORS['14d']}] hover:bg-[${COLORS['14d']}]/10`}`}>3D</button>
+                                </div>
+                                <div className="mb-3 shrink-0 pr-40">
+                                    <p className="text-xs uppercase opacity-70 tracking-widest text-[#b8a86c] font-bold">MACRO NUPL</p>
+                                </div>
+                                <div className="flex-1 min-h-0 relative">
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <ComposedChart data={displayData}>
+                                            <CartesianGrid strokeDasharray="3 4" stroke="#a4b596" opacity={0.1} />
+                                            <XAxis dataKey="time" hide />
+                                            <YAxis yAxisId="metric" domain={['auto', 'auto']} tick={{ fontSize: 10, fill: COLORS['14d'] }} tickFormatter={(v) => v.toFixed(3)} axisLine={false} tickLine={false} width={45} />
+                                            <YAxis yAxisId="price" orientation="right" domain={['auto', 'auto']} hide />
+                                            <Tooltip contentStyle={{backgroundColor: '#141810', borderColor: COLORS['14d'], fontSize: '11px'}} />
+                                            <ReferenceLine yAxisId="metric" y={0} stroke="#a4b596" opacity={0.5} />
+                                            <Line yAxisId="price" type="monotone" dataKey={activePriceDataKey} stroke="#a4b596" strokeWidth={1} dot={false} isAnimationActive={false} opacity={0.2} />
+                                            <Line yAxisId="metric" type="monotone" dataKey={actMacro} stroke={COLORS['14d']} strokeWidth={2} dot={false} isAnimationActive={false} />
+                                        </ComposedChart>
+                                    </ResponsiveContainer>
+                                </div>
+                            </div>
+
+                            {/* 7. RAW FLOWS (TX/AVG) */}
+                            <div className="border border-[#a4b596]/30 bg-[#141810] p-4 glow-box flex flex-col min-h-[350px] relative">
+                                <div className="absolute top-4 right-4 flex z-10 gap-2">
+                                    <button onClick={() => setActFlow('tx_count')} className={`px-2 py-1 text-[9px] border transition-colors ${actFlow === 'tx_count' ? `bg-[#a4b596] text-[#1e2418] border-[#a4b596]` : `border-[#a4b596] text-[#a4b596] hover:bg-[#a4b596]/10`}`}>TX COUNT</button>
+                                    <button onClick={() => setActFlow('avg_trade_bps')} className={`px-2 py-1 text-[9px] border transition-colors ${actFlow === 'avg_trade_bps' ? `bg-[#a4b596] text-[#1e2418] border-[#a4b596]` : `border-[#a4b596] text-[#a4b596] hover:bg-[#a4b596]/10`}`}>AVG TX SIZE</button>
+                                </div>
+                                <div className="mb-3 shrink-0 pr-40">
+                                    <p className="text-xs uppercase opacity-70 tracking-widest text-[#a4b596] font-bold">RAW EVENT FLOWS</p>
+                                </div>
+                                <div className="flex-1 min-h-0 relative">
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <ComposedChart data={displayData}>
+                                            <CartesianGrid strokeDasharray="3 4" stroke="#a4b596" opacity={0.1} />
+                                            <XAxis dataKey="time" hide />
+                                            <YAxis yAxisId="metric" domain={['auto', 'auto']} tickFormatter={(v) => v > 100 ? v : v.toFixed(3)} tick={{ fontSize: 10, fill: '#a4b596' }} axisLine={false} tickLine={false} width={45} />
+                                            <YAxis yAxisId="price" orientation="right" domain={['auto', 'auto']} hide />
+                                            <Tooltip contentStyle={{backgroundColor: '#141810', borderColor: '#a4b596', fontSize: '11px'}} />
+                                            <Line yAxisId="price" type="monotone" dataKey={activePriceDataKey} stroke="#a4b596" strokeWidth={1} dot={false} isAnimationActive={false} opacity={0.2} />
+                                            <Bar yAxisId="metric" dataKey={actFlow} fill="#a4b596" opacity={0.4} isAnimationActive={false} />
+                                        </ComposedChart>
+                                    </ResponsiveContainer>
+                                </div>
+                            </div>
+
+                            {/* 8. BUYS VS SELLS */}
+                            <div className="border border-[#a4b596]/30 bg-[#141810] p-4 glow-box flex flex-col min-h-[350px]">
+                                <div className="mb-3 shrink-0">
+                                    <p className="text-xs uppercase opacity-70 tracking-widest mb-2 text-[#d1e0c5] font-bold">BUYS VS SELLS (RAW TOKENS)</p>
+                                </div>
+                                <div className="flex-1 min-h-0 relative">
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <ComposedChart data={displayData}>
+                                            <CartesianGrid strokeDasharray="3 4" stroke="#a4b596" opacity={0.1} />
+                                            <XAxis dataKey="time" hide />
+                                            <YAxis yAxisId="metric" domain={['auto', 'auto']} tickFormatter={(v) => (v/1000).toFixed(0)+'k'} tick={{ fontSize: 10, fill: '#a4b596' }} axisLine={false} tickLine={false} width={45} />
+                                            <YAxis yAxisId="price" orientation="right" domain={['auto', 'auto']} hide />
+                                            <Tooltip contentStyle={{backgroundColor: '#141810', borderColor: '#d1e0c5', fontSize: '11px'}} />
+                                            <Line yAxisId="price" type="monotone" dataKey={activePriceDataKey} stroke="#a4b596" strokeWidth={1} dot={false} isAnimationActive={false} opacity={0.2} />
+                                            <Area yAxisId="metric" type="stepAfter" dataKey="buy_tokens" fill={REF_GREEN} stroke={REF_GREEN} opacity={0.3} isAnimationActive={false} />
+                                            <Area yAxisId="metric" type="stepAfter" dataKey="sell_tokens" fill={REF_RED} stroke={REF_RED} opacity={0.3} isAnimationActive={false} />
+                                        </ComposedChart>
+                                    </ResponsiveContainer>
+                                </div>
+                            </div>
+                            
+                            {/* 9. 100% STACKED SUPPLY BINS */}
+                            <div className="border border-[#a4b596]/30 bg-[#141810] p-4 glow-box flex flex-col min-h-[400px] col-span-1 xl:col-span-2">
+                                <div className="mb-3 shrink-0">
+                                    <p className="text-xs uppercase opacity-70 tracking-widest mb-1 text-[#d1e0c5] font-bold">SUPPLY PROFITABILITY DISTRIBUTION ({activeDenom.toUpperCase()} @ {selectedRes.toUpperCase()})</p>
+                                    <p className="text-[10px] opacity-50">100% NORMALIZED STACKED AREA // BOTTOM: DEEP LOSSES // TOP: HIGH PROFITS</p>
+                                </div>
+                                <div className="flex-1 min-h-0 relative">
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <AreaChart data={displayData}>
+                                            <CartesianGrid strokeDasharray="3 4" stroke="#a4b596" opacity={0.1} />
+                                            <XAxis dataKey="time" hide />
+                                            <YAxis domain={[0, 100]} tickFormatter={(v) => v + '%'} tick={{ fontSize: 10, fill: '#a4b596' }} axisLine={false} tickLine={false} width={45} />
+                                            <Tooltip 
+                                                contentStyle={{backgroundColor: '#141810', borderColor: '#a4b596', fontSize: '11px'}} 
+                                                itemStyle={{paddingTop: '2px', paddingBottom: '2px'}}
+                                                formatter={(val, name) => [val.toFixed(2)+'%', name.replace('pct_bin_', 'BIN: ')]} 
+                                            />
+                                            {BIN_LABELS.map((b, i) => (
+                                                <Area key={b} type="monotone" dataKey={`pct_bin_${b}`} stackId="1" stroke={BIN_COLORS[i]} fill={BIN_COLORS[i]} isAnimationActive={false} opacity={0.8} />
+                                            ))}
+                                        </AreaChart>
+                                    </ResponsiveContainer>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* STATS TABLE */}
+                        <div className="mt-4 border border-[#a4b596]/30 bg-[#141810] p-4 glow-box">
+                            <h2 className="text-sm font-bold tracking-widest text-[#d1e0c5] border-b border-[#a4b596]/20 pb-2 mb-4 uppercase">
+                                GLOBAL CONSENSUS PROFILER ({activeDenom.toUpperCase()})
+                            </h2>
+                            <div className="overflow-x-auto max-h-[400px] overflow-y-auto pr-2">
+                                <table className="w-full text-left text-[10px] tracking-wider border-collapse">
+                                    <thead className="sticky top-0 bg-[#141810] z-10 shadow-md">
+                                        <tr className="text-[#a4b596] opacity-80 border-b border-[#a4b596]/20">
+                                            <th className="py-2 px-2">FEATURE SIGNATURE</th>
+                                            <th className="py-2 px-2">SYS. STATUS</th>
+                                            <th className="py-2 px-2 text-right">R² SCORE</th>
+                                            <th className="py-2 px-2 text-right">AUTOCORR</th>
+                                            <th className="py-2 px-2 text-right">MIN VAL</th>
+                                            <th className="py-2 px-2 text-right">MAX VAL</th>
+                                            <th className="py-2 px-2 text-right">MEAN</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {Object.entries(payload.stats[activeDenom]).map(([feat, stats], idx) => {
+                                            let statusColor = "text-[#a4b596]";
+                                            if (stats.status === "PREMIUM (R2)") statusColor = "text-[#b8a86c] font-bold";
+                                            if (stats.status === "DROPPED (AC)") statusColor = "text-[#b56a6a] line-through opacity-70";
+                                            
+                                            return (
+                                                <tr key={feat} className={`border-b border-[#a4b596]/10 hover:bg-[#3a4531]/30 transition-colors ${idx % 2 === 0 ? 'bg-white/[0.02]' : ''}`}>
+                                                    <td className="py-2 px-2 font-mono text-[#d1e0c5]">{feat}</td>
+                                                    <td className={`py-2 px-2 ${statusColor}`}>{stats.status}</td>
+                                                    <td className={`py-2 px-2 text-right font-mono ${stats.status === 'PREMIUM (R2)' ? 'text-[#b8a86c] font-bold' : 'text-white'}`}>{(stats.global_r2 * 100).toFixed(4)}%</td>
+                                                    <td className={`py-2 px-2 text-right font-mono ${stats.global_ac > 0.95 ? 'text-[#b56a6a]' : 'text-white'}`}>{(stats.global_ac).toFixed(4)}</td>
+                                                    <td className="py-2 px-2 text-right opacity-70 font-mono">{stats.min !== null ? stats.min.toFixed(4) : 'N/A'}</td>
+                                                    <td className="py-2 px-2 text-right opacity-70 font-mono">{stats.max !== null ? stats.max.toFixed(4) : 'N/A'}</td>
+                                                    <td className="py-2 px-2 text-right opacity-70 font-mono">{stats.mean !== null ? stats.mean.toFixed(4) : 'N/A'}</td>
+                                                </tr>
+                                            );
+                                        })}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <footer className="text-[10px] border-t border-[#a4b596]/50 pt-2 shrink-0 mt-4 pb-4">
+                            <span className="blinking-cursor">made by t</span>
+                        </footer>
+                    </div>
+                </div>
+            );
+        };
+
+        const root = createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>

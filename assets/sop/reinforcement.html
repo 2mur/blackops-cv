@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SOP: BAYESIAN RL PREDICTABILITY</title>
+
+    <script type="importmap">
+    {
+        "imports": {
+            "react": "https://esm.sh/react@18.2.0",
+            "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+            "recharts": "https://esm.sh/recharts@2.12.2?deps=react@18.2.0,react-dom@18.2.0"
+        }
+    }
+    </script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <style>
+        body { background-color: #1e2418; color: #a4b596; margin: 0; overflow: hidden; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+        .scanlines { background: linear-gradient(to bottom, rgba(255, 255, 255, 0), rgba(255, 255, 255, 0) 50%, rgba(0, 0, 0, 0.15) 50%, rgba(0, 0, 0, 0.15)); background-size: 100% 4px; pointer-events: none; position: fixed; inset: 0; z-index: 50; }
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: rgba(58, 69, 49, 0.2); }
+        ::-webkit-scrollbar-thumb { background: rgba(164, 181, 150, 0.4); }
+        .glow-box { box-shadow: inset 0 0 20px rgba(164, 181, 150, 0.03); background: rgba(20, 24, 16, 0.4); backdrop-filter: blur(4px); }
+    </style>
+</head>
+
+<body>
+    <div class="scanlines"></div>
+    <div id="root"></div>
+
+    <script type="text/babel" data-type="module">
+        import React, { useState, useEffect, useMemo } from 'react';
+        import { createRoot } from 'react-dom/client';
+        import { 
+            Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, 
+            BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, ReferenceLine,
+            LineChart, Line
+        } from 'recharts';
+
+        const DUNE_ID = 4834833;
+        
+        // SOP Theme Colors
+        const COLOR_LONG = "#10b981";  // Emerald
+        const COLOR_SHORT = "#ef4444"; // Red
+        const COLOR_HOLD = "#60a5fa";  // Blue
+
+        const EXP_COLORS = {
+            "Discrete Q-Learning (PCA)": "#c084fc", // Purple
+            "Continuous DQN (Full Features)": "#3b82f6", // Blue
+            "Continuous DQN (PCA Features)": "#facc15" // Yellow
+        };
+
+        const ACTION_MAP = {
+            0: { label: "SHORT", color: COLOR_SHORT },
+            1: { label: "HOLD", color: COLOR_HOLD },
+            2: { label: "LONG", color: COLOR_LONG }
+        };
+
+        const App = () => {
+            const [rlData, setRlData] = useState(null);
+            const [loading, setLoading] = useState(true);
+            const [activeExpKey, setActiveExpKey] = useState("Discrete Q-Learning (PCA)");
+            const [activeView, setActiveView] = useState("tuning"); // 'tuning' | 'regimes'
+            const [selectedTrialIdx, setSelectedTrialIdx] = useState(0);
+            const [selectedStateIdx, setSelectedStateIdx] = useState(0);
+
+            useEffect(() => {
+                fetch(`data/rl_state_predictability.json`)
+                    .then(res => res.json())
+                    .then(data => {
+                        setRlData(data);
+                        setLoading(false);
+                    })
+                    .catch(err => {
+                        console.error("Failed to load RL JSON:", err);
+                        setLoading(false);
+                    });
+            }, []);
+
+            // Resets
+            useEffect(() => {
+                setSelectedTrialIdx(0);
+                setSelectedStateIdx(0);
+            }, [activeExpKey, activeView]);
+
+            const activeExperiment = useMemo(() => {
+                if (!rlData || !rlData.experiments) return null;
+                return rlData.experiments[activeExpKey];
+            }, [rlData, activeExpKey]);
+
+            // === TUNING VIEW DATA ===
+            const trials = activeExperiment?.tuning_trials || [];
+            const activeTrial = trials[selectedTrialIdx];
+            
+            const trialCurveData = useMemo(() => {
+                if (!activeTrial || !activeTrial.learning_curve) return [];
+                return activeTrial.learning_curve.map((val, idx) => ({
+                    episode: idx + 1,
+                    win_rate: val
+                }));
+            }, [activeTrial]);
+
+            // === REGIMES VIEW DATA ===
+            const states = activeExperiment?.top_predictable_states || [];
+            const activeState = states[selectedStateIdx];
+
+            const radarData = useMemo(() => {
+                if (!activeState) return [];
+                return Object.entries(activeState.features).map(([key, value]) => ({
+                    feature: key.replace(/_tanh/g, '').replace(/_14d/g, '').replace(/_30d/g, '').replace(/_3d/g, '').toUpperCase(),
+                    fullFeature: key,
+                    value: value
+                }));
+            }, [activeState]);
+
+            const qValuesData = useMemo(() => {
+                if (!activeState) return [];
+                const qVals = activeState.q_values_ql || activeState.q_values; 
+                if (!qVals) return [];
+                return [
+                    { action: "SHORT", q_value: qVals[0], color: COLOR_SHORT },
+                    { action: "HOLD", q_value: qVals[1], color: COLOR_HOLD },
+                    { action: "LONG", q_value: qVals[2], color: COLOR_LONG }
+                ];
+            }, [activeState]);
+
+            if (loading) return <div className="h-screen flex items-center justify-center text-[#a4b596] animate-pulse tracking-widest">LOADING OPTUNA TRIALS...</div>;
+            if (!rlData) return <div className="h-screen flex items-center justify-center text-[#ef4444] tracking-widest">ERROR: RL PAYLOAD NOT FOUND</div>;
+
+            const themeColor = EXP_COLORS[activeExpKey] || "#a4b596";
+
+            return (
+                <div className="h-screen flex flex-col bg-[#1e2418] text-[#a4b596] p-4 gap-4 z-10 relative">
+                    
+                    {/* HEADER */}
+                    <header className="flex justify-between items-end border-b border-[#a4b596]/50 pb-2 shrink-0">
+                        <div>
+                            <h1 className="text-xl font-bold tracking-widest text-[#d1e0c5]">BAYESIAN RL OPTIMIZATION</h1>
+                            <div className="text-[10px] opacity-70 tracking-widest mt-1 uppercase flex items-center gap-3">
+                                <span>METHOD: {rlData.metadata.tuning_method}</span>
+                                <span>|</span>
+                                <span>EPISODES: {rlData.metadata.episodes}</span>
+                                <span>|</span>
+                                <span>SPLIT: {rlData.metadata.train_split * 100}%</span>
+                            </div>
+                        </div>
+                        
+                        <div className="flex flex-col items-end gap-2">
+                            {/* Experiment Selector */}
+                            <div className="flex gap-1 p-1 border border-[#a4b596]/30 bg-[#141810]">
+                                {Object.keys(EXP_COLORS).map(key => (
+                                    <button 
+                                        key={key}
+                                        onClick={() => setActiveExpKey(key)}
+                                        className={`px-3 py-1 text-[10px] border tracking-widest transition-all ${activeExpKey === key ? 'text-[#1e2418] font-bold' : 'opacity-50 hover:opacity-100 bg-transparent'}`}
+                                        style={{ 
+                                            backgroundColor: activeExpKey === key ? EXP_COLORS[key] : 'transparent',
+                                            borderColor: activeExpKey === key ? EXP_COLORS[key] : `${EXP_COLORS[key]}40`,
+                                            color: activeExpKey !== key ? EXP_COLORS[key] : '#1e2418'
+                                        }}
+                                    >
+                                        [{key.split(' ')[0]} {key.includes('PCA') ? 'PCA' : 'FULL'}]
+                                    </button>
+                                ))}
+                            </div>
+                            
+                            {/* View Selector */}
+                            <div className="flex gap-2">
+                                <button onClick={() => setActiveView('tuning')} className={`px-4 py-1 text-xs border tracking-widest transition-all ${activeView === 'tuning' ? 'bg-[#a4b596] text-[#1e2418] border-[#a4b596] font-bold' : 'border-[#a4b596]/40 text-[#a4b596] opacity-60 hover:opacity-100'}`}>
+                                    TUNING HISTORY
+                                </button>
+                                <button onClick={() => setActiveView('regimes')} className={`px-4 py-1 text-xs border tracking-widest transition-all ${activeView === 'regimes' ? 'bg-[#a4b596] text-[#1e2418] border-[#a4b596] font-bold' : 'border-[#a4b596]/40 text-[#a4b596] opacity-60 hover:opacity-100'}`}>
+                                    OPTIMAL REGIMES
+                                </button>
+                            </div>
+                        </div>
+                    </header>
+
+                    {/* MAIN CONTENT AREA */}
+                    <div className="flex-1 flex gap-4 min-h-0">
+                        
+                        {/* ========================================================= */}
+                        {/* VIEW 1: BAYESIAN TUNING TRIALS                            */}
+                        {/* ========================================================= */}
+                        {activeView === 'tuning' && (
+                            <>
+                                {/* LEFT: TRIALS LEADERBOARD */}
+                                <div className="w-[320px] border border-[#a4b596]/30 bg-[#141810] flex flex-col min-h-0 glow-box shrink-0">
+                                    <div className="p-3 border-b border-[#a4b596]/30 bg-[#1a2016]">
+                                        <h3 className="text-[10px] font-bold text-[#d1e0c5] tracking-widest flex justify-between">
+                                            <span>OPTUNA TRIALS</span>
+                                            <span>OOS WIN RATE</span>
+                                        </h3>
+                                        <p className="text-[8px] opacity-50 mt-1 uppercase" style={{color: themeColor}}>
+                                            {activeExpKey}
+                                        </p>
+                                    </div>
+                                    <div className="flex-1 overflow-y-auto p-2 space-y-1">
+                                        {trials.map((trial, idx) => {
+                                            const isSelected = idx === selectedTrialIdx;
+                                            return (
+                                                <div 
+                                                    key={trial.trial_id} 
+                                                    onClick={() => setSelectedTrialIdx(idx)}
+                                                    className={`flex items-center justify-between p-3 cursor-pointer border-l-2 transition-colors ${isSelected ? 'bg-[#3a4531]' : 'bg-transparent border-transparent hover:bg-[#a4b596]/10'}`}
+                                                    style={{ borderLeftColor: isSelected ? themeColor : 'transparent' }}
+                                                >
+                                                    <div className="flex items-center gap-3">
+                                                        <span className="text-[10px] font-mono opacity-50 w-4">{idx + 1}.</span>
+                                                        <div>
+                                                            <p className={`text-xs font-bold font-mono ${isSelected ? 'text-white' : 'text-[#a4b596]'}`}>TRIAL_{trial.trial_id}</p>
+                                                        </div>
+                                                    </div>
+                                                    <div className="text-[11px] font-mono font-bold" style={{ color: isSelected ? themeColor : '#a4b596' }}>
+                                                        {trial.final_win_rate.toFixed(2)}%
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+
+                                {/* RIGHT: TRIAL DETAILS & LEARNING CURVE */}
+                                <div className="flex-1 flex flex-col gap-4 min-h-0">
+                                    {/* PARAMETERS BOX */}
+                                    <div className="border border-[#a4b596]/30 bg-[#141810] p-4 glow-box shrink-0">
+                                        <div className="flex justify-between items-start mb-4 border-b border-[#a4b596]/20 pb-2">
+                                            <div>
+                                                <p className="text-[10px] uppercase tracking-widest font-bold text-[#d1e0c5]">TRIAL HYPERPARAMETERS</p>
+                                                <p className="text-[9px] opacity-60 mt-1">SAMPLED BY TREE-STRUCTURED PARZEN ESTIMATOR</p>
+                                            </div>
+                                            <div className="text-right">
+                                                <p className="text-[9px] opacity-60 uppercase">FINAL OOS WIN RATE</p>
+                                                <p className="text-2xl font-bold font-mono" style={{ color: themeColor }}>
+                                                    {activeTrial?.final_win_rate.toFixed(2)}%
+                                                </p>
+                                            </div>
+                                        </div>
+                                        <div className="grid grid-cols-4 gap-4">
+                                            {activeTrial && Object.entries(activeTrial.params).map(([key, val]) => (
+                                                <div key={key} className="bg-[#1a2016] border border-[#a4b596]/10 p-3 rounded-sm">
+                                                    <p className="text-[8px] uppercase tracking-widest opacity-60 mb-1">{key}</p>
+                                                    <p className="text-sm font-mono font-bold text-[#d1e0c5]">
+                                                        {typeof val === 'number' && !Number.isInteger(val) ? val.toFixed(5) : val}
+                                                    </p>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+
+                                    {/* LEARNING CURVE CHART */}
+                                    <div className="flex-1 border border-[#a4b596]/30 bg-[#1a2016] p-4 glow-box relative flex flex-col min-h-0">
+                                        <div className="absolute top-4 left-4 z-10">
+                                            <p className="text-[10px] uppercase tracking-widest font-bold text-[#d1e0c5]">OOS EVALUATION CURVE</p>
+                                            <p className="text-[9px] opacity-60 mt-1">TEST SET PREDICTABILITY OVER {rlData.metadata.episodes} EPISODES</p>
+                                        </div>
+                                        <div className="flex-1 mt-10">
+                                            <ResponsiveContainer width="100%" height="100%">
+                                                <LineChart data={trialCurveData} margin={{ top: 20, right: 30, left: -20, bottom: 5 }}>
+                                                    <CartesianGrid strokeDasharray="3 4" stroke="#a4b596" opacity={0.1} />
+                                                    <XAxis dataKey="episode" tick={{fontSize: 9, fill: '#a4b596'}} axisLine={false} tickLine={false} />
+                                                    <YAxis domain={['auto', 'auto']} tick={{fontSize: 9, fill: '#a4b596'}} axisLine={false} tickLine={false} tickFormatter={(v) => v.toFixed(1) + '%'} />
+                                                    <Tooltip 
+                                                        contentStyle={{ backgroundColor: '#141810', borderColor: `${themeColor}40`, color: '#d1e0c5', fontSize: '10px' }} 
+                                                        labelFormatter={(label) => `Episode ${label}`}
+                                                        itemStyle={{ color: themeColor }}
+                                                        formatter={(value) => [`${value.toFixed(2)}%`, 'Win Rate']}
+                                                    />
+                                                    <Line type="monotone" dataKey="win_rate" stroke={themeColor} strokeWidth={2} dot={false} activeDot={{ r: 4, fill: '#141810', stroke: themeColor, strokeWidth: 2 }} isAnimationActive={false} />
+                                                </LineChart>
+                                            </ResponsiveContainer>
+                                        </div>
+                                    </div>
+                                </div>
+                            </>
+                        )}
+
+                        {/* ========================================================= */}
+                        {/* VIEW 2: OPTIMAL REGIMES (TOP STATES)                      */}
+                        {/* ========================================================= */}
+                        {activeView === 'regimes' && (
+                            <>
+                                {/* LEFT: STATES LEADERBOARD */}
+                                <div className="w-[320px] border border-[#a4b596]/30 bg-[#141810] flex flex-col min-h-0 glow-box shrink-0">
+                                    <div className="p-3 border-b border-[#a4b596]/30 bg-[#1a2016]">
+                                        <h3 className="text-[10px] font-bold text-[#d1e0c5] tracking-widest flex justify-between">
+                                            <span>RANKED BY EXPECTED V(s)</span>
+                                            <span>{activeExpKey.includes('Discrete') ? 'CLUSTER ID' : 'HIST IDX'}</span>
+                                        </h3>
+                                        <p className="text-[8px] opacity-50 mt-1 uppercase" style={{color: themeColor}}>
+                                            USING BEST TUNED PARAMS
+                                        </p>
+                                    </div>
+                                    <div className="flex-1 overflow-y-auto p-2 space-y-1">
+                                        {states.map((state, idx) => {
+                                            const isSelected = idx === selectedStateIdx;
+                                            const actionObj = ACTION_MAP[state.recommended_action];
+                                            const identifier = state.state_id !== undefined ? `STATE_${state.state_id}` : `IDX_${state.historical_index}`;
+                                            
+                                            return (
+                                                <div 
+                                                    key={idx} 
+                                                    onClick={() => setSelectedStateIdx(idx)}
+                                                    className={`flex items-center justify-between p-2 cursor-pointer border-l-2 transition-colors ${isSelected ? 'bg-[#3a4531] border-[#d1e0c5]' : 'bg-transparent border-transparent hover:bg-[#a4b596]/10'}`}
+                                                >
+                                                    <div className="flex items-center gap-3">
+                                                        <span className="text-[10px] font-mono opacity-50 w-4">{idx + 1}.</span>
+                                                        <div>
+                                                            <p className={`text-xs font-bold font-mono ${isSelected ? 'text-white' : 'text-[#a4b596]'}`}>{identifier}</p>
+                                                            <p className="text-[9px] opacity-70">V(s): {state.expected_value_v.toFixed(4)}</p>
+                                                        </div>
+                                                    </div>
+                                                    <div 
+                                                        className="text-[9px] px-2 py-1 font-bold border rounded-sm"
+                                                        style={{ color: actionObj.color, borderColor: `${actionObj.color}40`, backgroundColor: `${actionObj.color}10` }}
+                                                    >
+                                                        {actionObj.label}
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+
+                                {/* RIGHT: STATE VISUALIZATION */}
+                                <div className="flex-1 flex gap-4 min-h-0">
+                                    
+                                    {/* RADAR CHART (GEOMETRIC PROFILE) */}
+                                    <div className="flex-[2] border border-[#a4b596]/30 bg-[#1a2016] p-4 glow-box relative flex flex-col min-h-0">
+                                        <div className="absolute top-4 left-4 z-10">
+                                            <p className="text-[10px] uppercase tracking-widest font-bold text-[#d1e0c5]">GEOMETRIC STATE PROFILE</p>
+                                            <p className="text-[9px] opacity-60 mt-1">
+                                                {activeExpKey.includes('Discrete') ? `CLUSTER STATE [${activeState?.state_id}]` : `HISTORICAL FRAME [${activeState?.historical_index}]`}
+                                            </p>
+                                        </div>
+                                        <div className="flex-1 mt-6">
+                                            {activeState && (
+                                                <ResponsiveContainer width="100%" height="100%">
+                                                    <RadarChart cx="50%" cy="50%" outerRadius={activeExpKey.includes('PCA') ? "65%" : "75%"} data={radarData} margin={{top: 20, right: 30, bottom: 20, left: 30}}>
+                                                        <PolarGrid stroke="#a4b596" strokeOpacity={0.2} />
+                                                        <PolarAngleAxis 
+                                                            dataKey="feature" 
+                                                            tick={{ fill: '#a4b596', fontSize: 8 }} 
+                                                        />
+                                                        <PolarRadiusAxis angle={90} domain={[-1, 1]} tick={{ fill: '#a4b596', fontSize: 8 }} axisLine={false} />
+                                                        <Radar 
+                                                            name="Regime Vector" 
+                                                            dataKey="value" 
+                                                            stroke={ACTION_MAP[activeState.recommended_action].color} 
+                                                            fill={ACTION_MAP[activeState.recommended_action].color} 
+                                                            fillOpacity={0.3} 
+                                                            isAnimationActive={true}
+                                                        />
+                                                        <Tooltip 
+                                                            contentStyle={{ backgroundColor: '#141810', borderColor: 'rgba(164,181,150,0.3)', color: '#d1e0c5', fontSize: '10px' }} 
+                                                            itemStyle={{ color: '#d1e0c5' }} 
+                                                            formatter={(value, name, props) => [value.toFixed(4), props.payload.fullFeature]}
+                                                        />
+                                                    </RadarChart>
+                                                </ResponsiveContainer>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    {/* Q-VALUES ACTION BAR CHART */}
+                                    <div className="flex-1 border border-[#a4b596]/30 bg-[#1a2016] p-4 glow-box relative flex flex-col min-h-0">
+                                        <div className="absolute top-4 left-4 z-10">
+                                            <p className="text-[10px] uppercase tracking-widest font-bold text-[#d1e0c5]">Q(s, a) ESTIMATES</p>
+                                            <p className="text-[9px] opacity-60 mt-1">EXPECTED LOG FUTURE RETURN</p>
+                                        </div>
+                                        <div className="flex-1 mt-12">
+                                            <ResponsiveContainer width="100%" height="100%">
+                                                <BarChart data={qValuesData} margin={{ top: 20, right: 20, bottom: 20, left: 0 }}>
+                                                    <CartesianGrid strokeDasharray="3 4" stroke="#a4b596" opacity={0.1} vertical={false} />
+                                                    <XAxis dataKey="action" tick={{fontSize: 10, fill: '#a4b596', fontWeight: 'bold'}} axisLine={false} tickLine={false} />
+                                                    <YAxis tick={{fontSize: 9, fill: '#a4b596'}} axisLine={false} tickLine={false} />
+                                                    <Tooltip 
+                                                        cursor={{fill: 'rgba(164, 181, 150, 0.05)'}} 
+                                                        contentStyle={{ backgroundColor: '#141810', borderColor: 'rgba(164,181,150,0.3)', color: '#d1e0c5', fontSize: '10px' }} 
+                                                        formatter={(value) => value.toFixed(6)}
+                                                    />
+                                                    <ReferenceLine y={0} stroke="#a4b596" opacity={0.5} />
+                                                    <Bar dataKey="q_value" radius={[2, 2, 0, 0]} isAnimationActive={false}>
+                                                        {qValuesData.map((entry, index) => (
+                                                            <Cell key={`cell-${index}`} fill={entry.color} opacity={0.85} />
+                                                        ))}
+                                                    </Bar>
+                                                </BarChart>
+                                            </ResponsiveContainer>
+                                        </div>
+                                        <div className="mt-2 text-center flex flex-col justify-center items-center h-16 border-t border-[#a4b596]/20 bg-[#141810]">
+                                            {activeState && (
+                                                <React.Fragment>
+                                                    <span className="text-[8px] opacity-50 uppercase tracking-widest">Greedy Policy Decision</span>
+                                                    <p className="text-xl font-bold tracking-widest" style={{ color: ACTION_MAP[activeState.recommended_action].color }}>
+                                                        {ACTION_MAP[activeState.recommended_action].label}
+                                                    </p>
+                                                </React.Fragment>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+                            </>
+                        )}
+
+                    </div>
+                </div>
+            );
+        };
+
+        const root = createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>

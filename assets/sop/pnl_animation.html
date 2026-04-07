@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SOP: NETWORK PNL & FLOW DISTRIBUTIONS</title>
+
+    <script type="importmap">
+    {
+        "imports": {
+            "react": "https://esm.sh/react@18.2.0",
+            "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+            "recharts": "https://esm.sh/recharts@2.12.2?deps=react@18.2.0,react-dom@18.2.0"
+        }
+    }
+    </script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <style>
+        body { background-color: #1e2418; color: #a4b596; margin: 0; overflow: hidden; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+        .scanlines { background: linear-gradient(to bottom, rgba(255, 255, 255, 0), rgba(255, 255, 255, 0) 50%, rgba(0, 0, 0, 0.15) 50%, rgba(0, 0, 0, 0.15)); background-size: 100% 4px; pointer-events: none; position: fixed; inset: 0; z-index: 50; }
+        
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: rgba(20, 24, 16, 0.6); border-radius: 4px; }
+        ::-webkit-scrollbar-thumb { background: rgba(164, 181, 150, 0.3); border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(164, 181, 150, 0.6); }
+        
+        .glow-box { box-shadow: inset 0 0 20px rgba(164, 181, 150, 0.03); background: rgba(20, 24, 16, 0.4); backdrop-filter: blur(4px); }
+        
+        input[type=range] { appearance: none; -webkit-appearance: none; width: 100%; background: transparent; }
+        input[type=range]::-webkit-slider-thumb { appearance: none; -webkit-appearance: none; height: 16px; width: 16px; border-radius: 50%; background: #facc15; cursor: pointer; margin-top: -6px; position: relative; z-index: 20; }
+        input[type=range]::-webkit-slider-runnable-track { width: 100%; height: 4px; cursor: pointer; background: rgba(164, 181, 150, 0.3); border-radius: 2px; }
+    </style>
+</head>
+
+<body>
+    <div class="scanlines"></div>
+    <div id="root"></div>
+
+    <script type="text/babel" data-type="module">
+        import React, { useState, useEffect, useRef, useMemo } from 'react';
+        import { createRoot } from 'react-dom/client';
+        import { 
+            LineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip,
+            BarChart, Bar, Cell, AreaChart, Area, ReferenceArea, Legend, ComposedChart
+        } from 'recharts';
+
+        const WINDOW_SIZE = 7 * 24; 
+        const TOKEN_SUPPLY = 1550000000;
+        const BIN_LABELS = [
+            '<-95%', '-95_to_-75', '-75_to_-50', '-50_to_-25', '-25_to_0', 
+            '0_to_25', '25_to_100', '100_to_200', '200_to_500', '>500%'
+        ];
+
+        const parseCSV = (text) => {
+            const lines = text.trim().split('\n');
+            if(lines.length < 2) return [];
+            const headers = lines[0].split(',').map(h => h.trim());
+            return lines.slice(1).map(line => {
+                const values = line.split(',');
+                const obj = {};
+                headers.forEach((h, i) => obj[h] = values[i] ? values[i].trim() : null);
+                return obj;
+            });
+        };
+
+        const processCSVData = (csvText) => {
+            if (!csvText) return [];
+            const parsedRaw = parseCSV(csvText);
+            
+            const formatted = BIN_LABELS.map(bin => ({
+                pnl_bin: bin,
+                first_partial_expected_hours: 0,
+                full_sell_expected_hours: 0, 
+                first_partial_lambda: 0, 
+                full_sell_lambda: 0,
+                first_partial_pct: 0, 
+                first_partial_count: 0, 
+                full_sell_count: 0,
+                ratio_first: 0,
+                ratio_full: 0
+            }));
+
+            parsedRaw.forEach(row => {
+                const binTarget = formatted.find(d => d.pnl_bin === row.pnl_bin);
+                if(binTarget) {
+                    // Mapped to the new optimized Python column names
+                    binTarget.first_partial_expected_hours = parseFloat(row.avg_time_to_first_sell) || 0;
+                    binTarget.first_partial_pct = parseFloat(row.avg_pct_first_sell) || 0;
+                    binTarget.first_partial_lambda = parseFloat(row.hazard_rate_first_sell) || 0;
+                    binTarget.first_partial_count = parseInt(row.first_sell_count) || 0;
+                    
+                    binTarget.full_sell_expected_hours = parseFloat(row.avg_time_to_full_exit) || 0;
+                    binTarget.full_sell_lambda = parseFloat(row.hazard_rate_full_exit) || 0;
+                    binTarget.full_sell_count = parseInt(row.full_exit_count) || 0;
+                }
+            });
+
+            formatted.forEach(bin => {
+                const totalEvents = bin.first_partial_count + bin.full_sell_count;
+                if (totalEvents > 0) {
+                    bin.ratio_first = (bin.first_partial_count / totalEvents) * 100;
+                    bin.ratio_full = (bin.full_sell_count / totalEvents) * 100;
+                }
+            });
+
+            return formatted;
+        };
+
+        const App = () => {
+            const [activeTab, setActiveTab] = useState('distribution'); 
+            const [denomination, setDenomination] = useState('native'); // 'native' or 'usd'
+            
+            const [frames, setFrames] = useState([]);
+            const [probDataNative, setProbDataNative] = useState([]);
+            const [probDataUsd, setProbDataUsd] = useState([]);
+            
+            const [currentIndex, setCurrentIndex] = useState(0);
+            const [isPlaying, setIsPlaying] = useState(false);
+            const [loading, setLoading] = useState(true);
+            
+            const timerRef = useRef(null);
+
+            useEffect(() => {
+                Promise.all([
+                    fetch('data/pnl/pnl_animation_data.json').then(res => res.json()).catch(() => []),
+                    fetch('data/pnl/sell_prob_analysis_native_4834833.csv').then(res => res.text()).catch(() => null),
+                    fetch('data/pnl/sell_prob_analysis_usd_4834833.csv').then(res => res.text()).catch(() => null)
+                ]).then(([animData, csvNativeText, csvUsdText]) => {
+                    setFrames(animData);
+                    setProbDataNative(processCSVData(csvNativeText));
+                    setProbDataUsd(processCSVData(csvUsdText));
+                    setLoading(false);
+                });
+            }, []);
+
+            useEffect(() => {
+                if (isPlaying && activeTab === 'distribution') {
+                    timerRef.current = setInterval(() => {
+                        setCurrentIndex(prev => {
+                            if (prev >= frames.length - 1) {
+                                setIsPlaying(false);
+                                return prev;
+                            }
+                            return prev + 1;
+                        });
+                    }, 50); 
+                } else {
+                    clearInterval(timerRef.current);
+                }
+                return () => clearInterval(timerRef.current);
+            }, [isPlaying, frames.length, activeTab]);
+
+            const fullTimeseries = useMemo(() => {
+                let cumBought = 0, cumSold = 0, cumTransfer = 0, cumNet = 0;
+                return frames.map((f, i) => {
+                    cumBought += f.tokens_bought || 0;
+                    cumSold += f.tokens_sold || 0;
+                    cumTransfer += f.transfer_tokens_sold || 0;
+                    cumNet += f.net_tokens || 0;
+                    return { 
+                        index: i, 
+                        price_native: f.price_native, 
+                        price_usd: f.price_usd,
+                        time: f.time,
+                        tokens_bought: f.tokens_bought, tokens_sold: f.tokens_sold,
+                        transfer_tokens_sold: f.transfer_tokens_sold, net_tokens: f.net_tokens,
+                        cum_bought: cumBought, cum_sold: cumSold, cum_transfer: cumTransfer, cum_net: cumNet
+                    };
+                });
+            }, [frames]);
+
+            const togglePlay = () => setIsPlaying(!isPlaying);
+
+            if (loading) return <div className="h-screen flex items-center justify-center text-[#a4b596] animate-pulse">LOADING DASHBOARD...</div>;
+            if (!frames.length) return <div className="h-screen flex items-center justify-center text-red-500">ERROR: NO DATA</div>;
+
+            const currentFrame = frames[currentIndex];
+            const dateObj = new Date(currentFrame.time);
+            const startIndex = Math.max(0, currentIndex - WINDOW_SIZE + 1);
+            const xAxisDomain = [startIndex, startIndex + WINDOW_SIZE - 1];
+            const visibleTimeseries = fullTimeseries.slice(startIndex, currentIndex + 1);
+            
+            const currentCumNet = fullTimeseries[currentIndex]?.cum_net || 0;
+            const percentSupply = ((Math.abs(currentCumNet) / TOKEN_SUPPLY) * 100).toFixed(2);
+
+            // Active Denomination Pointers
+            const activeProbData = denomination === 'native' ? probDataNative : probDataUsd;
+            const activePriceKey = denomination === 'native' ? 'price_native' : 'price_usd';
+            const activeBinKey = denomination === 'native' ? 'native_bins' : 'usd_bins';
+            const pricePrefix = denomination === 'native' ? 'A ' : '$';
+            const activePrice = denomination === 'native' ? currentFrame.price_native : currentFrame.price_usd;
+
+            const tbg = '#141810';
+            const tbdr = 'rgba(164,181,150,0.5)';
+
+            return (
+                <div className="h-screen flex flex-col bg-[#1e2418] text-[#a4b596] p-4 gap-4 z-10 relative">
+                    <header className="flex justify-between items-end border-b border-[#a4b596]/50 pb-2 shrink-0">
+                        <div className="flex items-end gap-6">
+                            <div>
+                                <h1 className="text-xl font-bold tracking-widest text-[#d1e0c5]">NETWORK PNL & FLOW DISTRIBUTION ENGINE</h1>
+                                <p className="text-[10px] opacity-70 tracking-widest mt-1">REAL-TIME UNREALIZED HOLDER STATE & SELL PROBABILITY</p>
+                            </div>
+                            
+                            {/* DENOMINATION TOGGLE */}
+                            <div className="flex gap-2 p-1 border border-[#a4b596]/30 bg-[#141810] mb-1">
+                                <button onClick={() => setDenomination('native')} className={`px-4 py-1 text-xs tracking-widest transition-all ${denomination === 'native' ? 'bg-[#a4b596] text-[#1e2418] font-bold' : 'text-[#a4b596] opacity-60 hover:opacity-100'}`}>
+                                    [NATIVE AVAX]
+                                </button>
+                                <button onClick={() => setDenomination('usd')} className={`px-4 py-1 text-xs tracking-widest transition-all ${denomination === 'usd' ? 'bg-[#a4b596] text-[#1e2418] font-bold' : 'text-[#a4b596] opacity-60 hover:opacity-100'}`}>
+                                    [FIAT USD]
+                                </button>
+                            </div>
+                        </div>
+
+                        <div className="flex gap-2 p-1 border border-[#a4b596]/30 bg-[#141810]">
+                            <button onClick={() => setActiveTab('distribution')} className={`px-4 py-1 text-xs tracking-widest transition-all ${activeTab === 'distribution' ? 'bg-[#a4b596] text-[#1e2418] font-bold' : 'text-[#a4b596] opacity-60 hover:opacity-100'}`}>
+                                [DISTRIBUTIONS]
+                            </button>
+                            <button onClick={() => { setActiveTab('probability'); setIsPlaying(false); }} className={`px-4 py-1 text-xs tracking-widest transition-all ${activeTab === 'probability' ? 'bg-[#facc15] text-[#1e2418] font-bold' : 'text-[#facc15] opacity-60 hover:opacity-100'}`}>
+                                [SELL PROBABILITY]
+                            </button>
+                        </div>
+                    </header>
+
+                    {/* ============================================== */}
+                    {/* TAB 1: DISTRIBUTION ENGINE */}
+                    {/* ============================================== */}
+                    {activeTab === 'distribution' && (
+                        <div className="flex-1 flex flex-col min-h-0 gap-4">
+                            {/* CONTROL BAR */}
+                            <div className="flex items-center gap-6 border border-[#a4b596]/30 bg-[#141810] p-3 glow-box shrink-0">
+                                <button 
+                                    onClick={togglePlay}
+                                    className={`px-6 py-2 text-xs font-bold border transition-all shrink-0 ${isPlaying ? 'bg-[#f87171] text-[#1e2418] border-[#f87171]' : 'bg-[#10b981] text-[#1e2418] border-[#10b981]'}`}
+                                >
+                                    {isPlaying ? 'PAUSE [||]' : 'PLAY [>]'}
+                                </button>
+                                
+                                <div className="flex-1 relative flex items-center h-12 bg-black/20 rounded">
+                                    <div className="absolute inset-0 z-0 pointer-events-none opacity-40 px-32 py-1">
+                                        <ResponsiveContainer width="100%" height="100%">
+                                            <AreaChart data={fullTimeseries}>
+                                                <XAxis dataKey="index" hide />
+                                                <YAxis domain={['auto', 'auto']} hide />
+                                                <Area type="monotone" dataKey={activePriceKey} stroke="#a4b596" fill="#a4b596" fillOpacity={0.2} strokeWidth={1} isAnimationActive={false} />
+                                                <ReferenceArea x1={startIndex} x2={currentIndex} fill="#facc15" fillOpacity={0.15} />
+                                            </AreaChart>
+                                        </ResponsiveContainer>
+                                    </div>
+                                    <div className="relative z-10 flex w-full items-center gap-4 px-4">
+                                        <span className="text-[10px] opacity-70 w-24 shrink-0">{dateObj.toLocaleDateString()} {dateObj.getHours()}:00</span>
+                                        <input 
+                                            type="range" min="0" max={frames.length - 1} value={currentIndex} 
+                                            onChange={(e) => setCurrentIndex(parseInt(e.target.value))} className="flex-1"
+                                        />
+                                        <span className="text-[10px] opacity-70 w-24 text-right shrink-0">Step {currentIndex}/{frames.length - 1}</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* 2x2 GRID */}
+                            <div className="flex-1 grid grid-cols-2 grid-rows-2 gap-4 min-h-0">
+                                {/* TOP LEFT: Price Timeline */}
+                                <div className="border border-[#a4b596]/30 bg-[#3a4531]/10 p-2 relative glow-box flex flex-col min-h-0">
+                                    <div className="absolute top-2 left-2 text-[10px] opacity-70 uppercase tracking-wide">ASSET PRICE TRAJECTORY</div>
+                                    <div className="absolute top-2 right-4 text-right z-10">
+                                        <p className="text-[10px] opacity-70 uppercase">CURRENT {denomination} PRICE</p>
+                                        <p className="text-xl font-bold text-white">{pricePrefix}{activePrice.toFixed(6)}</p>
+                                    </div>
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <LineChart data={visibleTimeseries} margin={{ top: 25, right: 0, left: 0, bottom: 0 }}>
+                                            <XAxis dataKey="index" type="number" domain={xAxisDomain} hide />
+                                            <YAxis domain={['auto', 'auto']} hide />
+                                            <Line type="monotone" dataKey={activePriceKey} stroke="#a4b596" strokeWidth={1.5} dot={false} isAnimationActive={false} />
+                                        </LineChart>
+                                    </ResponsiveContainer>
+                                </div>
+
+                                {/* TOP RIGHT: Hourly Flow */}
+                                <div className="border border-[#a4b596]/30 bg-[#141810] p-2 relative glow-box flex flex-col min-h-0">
+                                    <div className="absolute top-2 left-2 z-10">
+                                        <p className="text-[10px] uppercase tracking-wider opacity-70">HOURLY NETWORK FLOW</p>
+                                        <p className="text-sm font-bold text-[#60a5fa] mt-1">{currentFrame.active_users.toLocaleString()} ACTIVE WALLETS</p>
+                                    </div>
+                                    <div className="absolute top-2 right-4 text-right z-10 flex gap-6">
+                                        <div>
+                                            <p className="text-[10px] opacity-70 uppercase">Bought</p>
+                                            <p className="text-md font-bold text-[#10b981]">{(currentFrame.tokens_bought || 0).toLocaleString(undefined, {maximumFractionDigits:0})}</p>
+                                        </div>
+                                        <div>
+                                            <p className="text-[10px] opacity-70 uppercase">Sold</p>
+                                            <p className="text-md font-bold text-[#f87171]">{currentFrame.tokens_sold.toLocaleString(undefined, {maximumFractionDigits:0})}</p>
+                                        </div>
+                                    </div>
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <LineChart data={visibleTimeseries} margin={{ top: 40, right: 0, left: 0, bottom: 0 }}>
+                                            <CartesianGrid strokeDasharray="3 4" stroke="#a4b596" opacity={0.1} vertical={false} />
+                                            <XAxis dataKey="index" type="number" domain={xAxisDomain} hide />
+                                            <YAxis hide />
+                                            <Tooltip contentStyle={{ backgroundColor: tbg, borderColor: tbdr, fontSize: '10px' }} labelFormatter={() => ''} formatter={(val) => new Intl.NumberFormat('en').format(val)} />
+                                            <Line type="monotone" dataKey="tokens_bought" name="Bought" stroke="#10b981" strokeWidth={1.5} dot={false} isAnimationActive={false} opacity={0.8} />
+                                            <Line type="monotone" dataKey="tokens_sold" name="Sold (Known)" stroke="#f87171" strokeWidth={1.5} dot={false} isAnimationActive={false} opacity={0.8} />
+                                            <Line type="stepAfter" dataKey="transfer_tokens_sold" name="Sold (Transfer)" stroke="#c084fc" strokeWidth={1.5} strokeDasharray="4 4" dot={false} isAnimationActive={false} />
+                                        </LineChart>
+                                    </ResponsiveContainer>
+                                </div>
+
+                                {/* BOTTOM LEFT: PNL Bar Chart */}
+                                <div className="border border-[#a4b596]/30 bg-[#141810] p-4 relative glow-box flex flex-col min-h-0">
+                                    <div className="absolute top-4 left-4 z-10">
+                                        <p className="text-[10px] uppercase tracking-wider opacity-70">ACTIVE HOLDER PNL DISTRIBUTION ({denomination.toUpperCase()})</p>
+                                    </div>
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <BarChart data={currentFrame[activeBinKey]} margin={{ top: 30, right: 10, left: -20, bottom: 20 }}>
+                                            <CartesianGrid strokeDasharray="3 4" stroke="#a4b596" opacity={0.1} vertical={false} />
+                                            <XAxis dataKey="range" tick={{fontSize: 9, fill: '#a4b596'}} angle={-45} textAnchor="end" height={60} axisLine={false} tickLine={false} />
+                                            {/* Fix: Added explicit domain [0, 1] so it maxes at exactly 100% */}
+                                            <YAxis domain={[0, 1]} tick={{fontSize: 9, fill: '#a4b596'}} axisLine={false} tickLine={false} tickFormatter={(v)=> (v*100).toFixed(0)+'%'} />
+                                            <Tooltip cursor={{fill: 'rgba(164, 181, 150, 0.05)'}} contentStyle={{ backgroundColor: tbg, borderColor: tbdr, fontSize: '10px', color: '#a4b596' }} itemStyle={{ color: '#d1e0c5' }} formatter={(val) => [(val*100).toFixed(2)+'%']} />
+                                            <Bar dataKey="count" isAnimationActive={false}>
+                                                {currentFrame[activeBinKey].map((entry, index) => {
+                                                    const isNegative = entry.range.includes('-') && !entry.range.startsWith('>500');
+                                                    return <Cell key={`cell-${index}`} fill={isNegative ? '#f87171' : '#10b981'} opacity={0.8} />;
+                                                })}
+                                            </Bar>
+                                        </BarChart>
+                                    </ResponsiveContainer>
+                                </div>
+
+                                {/* BOTTOM RIGHT: Cumulative Flow */}
+                                <div className="border border-[#a4b596]/30 bg-[#141810] p-2 relative glow-box flex flex-col min-h-0">
+                                    <div className="absolute top-2 left-2 z-10">
+                                        <p className="text-[10px] uppercase tracking-wider opacity-70">LIFETIME CUMULATIVE FLOW</p>
+                                    </div>
+                                    <div className="absolute top-2 right-4 text-right z-10 flex gap-6">
+                                        <div>
+                                            <p className="text-[10px] opacity-70 uppercase">Total Net Tokens</p>
+                                            <div className="flex items-baseline gap-2 justify-end">
+                                                <p className={`text-md font-bold ${currentCumNet >= 0 ? 'text-[#10b981]' : 'text-[#f87171]'}`}>
+                                                    {currentCumNet > 0 ? '+' : ''}{currentCumNet.toLocaleString(undefined, {maximumFractionDigits:0})}
+                                                </p>
+                                                <p className="text-[10px] text-gray-500 font-normal">({percentSupply}%)</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <AreaChart data={visibleTimeseries} margin={{ top: 40, right: 0, left: 0, bottom: 0 }}>
+                                            <CartesianGrid strokeDasharray="3 4" stroke="#a4b596" opacity={0.1} vertical={false} />
+                                            <XAxis dataKey="index" type="number" domain={xAxisDomain} hide />
+                                            <YAxis hide />
+                                            <Tooltip contentStyle={{ backgroundColor: tbg, borderColor: tbdr, fontSize: '10px' }} labelFormatter={() => ''} formatter={(val) => new Intl.NumberFormat('en').format(val)} />
+                                            <Area type="monotone" dataKey="cum_bought" name="Total Bought" stroke="#10b981" fill="#10b981" fillOpacity={0.05} strokeWidth={1.5} isAnimationActive={false} />
+                                            <Area type="monotone" dataKey="cum_sold" name="Total Sold (Known)" stroke="#f87171" fill="#f87171" fillOpacity={0.05} strokeWidth={1.5} isAnimationActive={false} />
+                                            {/* <Area type="stepAfter" dataKey="cum_transfer" name="Total Sold (Unknown)" stroke="#c084fc" fill="none" strokeWidth={1.5} strokeDasharray="4 4" isAnimationActive={false} /> */}
+                                        </AreaChart>
+                                    </ResponsiveContainer>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* ============================================== */}
+                    {/* TAB 2: SELL PROBABILITY & QUEUEING ANALYSIS  */}
+                    {/* ============================================== */}
+                    {activeTab === 'probability' && (
+                        <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
+                            <div className="grid grid-cols-2 gap-4 auto-rows-[300px]">
+                                
+                                {/* TOP LEFT: Expected Duration (Hours) */}
+                                <div className="border border-[#facc15]/30 bg-[#141810] p-4 relative glow-box flex flex-col min-h-0">
+                                    <div className="absolute top-4 left-4 z-10">
+                                        <p className="text-[10px] uppercase tracking-wider text-[#facc15] opacity-90 font-bold">EXPECTED EXECUTION DURATION (HOURS) - {denomination.toUpperCase()}</p>
+                                    </div>
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <BarChart data={activeProbData} margin={{ top: 50, right: 10, left: -20, bottom: 20 }} barGap="-100%">
+                                            <CartesianGrid strokeDasharray="3 4" stroke="#a4b596" opacity={0.1} vertical={false} />
+                                            <XAxis dataKey="pnl_bin" tick={{fontSize: 9, fill: '#a4b596'}} angle={-45} textAnchor="end" height={60} axisLine={false} tickLine={false} />
+                                            <YAxis tick={{fontSize: 9, fill: '#a4b596'}} axisLine={false} tickLine={false} />
+                                            <Tooltip cursor={{fill: 'rgba(250, 204, 21, 0.05)'}} contentStyle={{ backgroundColor: tbg, borderColor: 'rgba(250,204,21,0.5)', fontSize: '10px', color: '#a4b596' }} itemStyle={{ color: '#d1e0c5' }} formatter={(val) => [val.toFixed(1) + ' hrs']} />
+                                            <Legend wrapperStyle={{fontSize: '10px'}} verticalAlign="top" align="right" />
+                                            
+                                            <Bar dataKey="first_partial_expected_hours" name="1st Action Sell" fill="#3b82f6" opacity={0.7} />
+                                            <Bar dataKey="full_sell_expected_hours" name="Full Exit" fill="#f87171" opacity={0.7} />
+                                        </BarChart>
+                                    </ResponsiveContainer>
+                                </div>
+
+                                {/* TOP RIGHT: Hazard Rate (Lambda) */}
+                                <div className="border border-[#facc15]/30 bg-[#141810] p-4 relative glow-box flex flex-col min-h-0">
+                                    <div className="absolute top-4 left-4 z-10">
+                                        <p className="text-[10px] uppercase tracking-wider text-[#facc15] opacity-90 font-bold">HAZARD RATE (λ) / TRIGGER VELOCITY - {denomination.toUpperCase()}</p>
+                                        <p className="text-[9px] opacity-60 mt-1">POISSON RATE (SELL EVENTS PER HOUR PER USER)</p>
+                                    </div>
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <LineChart data={activeProbData} margin={{ top: 50, right: 10, left: -10, bottom: 20 }}>
+                                            <CartesianGrid strokeDasharray="3 4" stroke="#a4b596" opacity={0.1} />
+                                            <XAxis dataKey="pnl_bin" tick={{fontSize: 9, fill: '#a4b596'}} angle={-45} textAnchor="end" height={60} axisLine={false} tickLine={false} />
+                                            <YAxis tick={{fontSize: 9, fill: '#a4b596'}} axisLine={false} tickLine={false} />
+                                            <Tooltip contentStyle={{ backgroundColor: tbg, borderColor: 'rgba(250,204,21,0.5)', fontSize: '10px', color: '#a4b596' }} formatter={(val) => [val.toFixed(4) + ' λ']} />
+                                            <Legend wrapperStyle={{fontSize: '10px'}} verticalAlign="top" align="right" />
+                                            <Line type="monotone" dataKey="first_partial_lambda" name="1st Action λ" stroke="#3b82f6" strokeWidth={2} dot={{r: 2}} />
+                                            <Line type="monotone" dataKey="full_sell_lambda" name="Full Exit λ" stroke="#f87171" strokeWidth={2} dot={{r: 2}} />
+                                        </LineChart>
+                                    </ResponsiveContainer>
+                                </div>
+
+                                {/* BOTTOM LEFT: Event Count Volume */}
+                                <div className="border border-[#facc15]/30 bg-[#141810] p-4 relative glow-box flex flex-col min-h-0">
+                                    <div className="absolute top-4 left-4 z-10">
+                                        <p className="text-[10px] uppercase tracking-wider text-[#facc15] opacity-90 font-bold">LIFETIME SELL EVENT VOLUME - {denomination.toUpperCase()}</p>
+                                    </div>
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <BarChart data={activeProbData} margin={{ top: 50, right: 10, left: -20, bottom: 20 }} barGap="-100%">
+                                            <CartesianGrid strokeDasharray="3 4" stroke="#a4b596" opacity={0.1} vertical={false} />
+                                            <XAxis dataKey="pnl_bin" tick={{fontSize: 9, fill: '#a4b596'}} angle={-45} textAnchor="end" height={60} axisLine={false} tickLine={false} />
+                                            <YAxis tick={{fontSize: 9, fill: '#a4b596'}} axisLine={false} tickLine={false} />
+                                            <Tooltip cursor={{fill: 'rgba(250, 204, 21, 0.05)'}} contentStyle={{ backgroundColor: tbg, borderColor: 'rgba(250,204,21,0.5)', fontSize: '10px', color: '#a4b596' }} itemStyle={{ color: '#d1e0c5' }} />
+                                            <Legend wrapperStyle={{fontSize: '10px'}} verticalAlign="top" align="right" />
+                                            <Bar dataKey="first_partial_count" name="1st Action" fill="#3b82f6" opacity={0.7} />
+                                            <Bar dataKey="full_sell_count" name="Full Exit" fill="#f87171" opacity={0.7} />
+                                        </BarChart>
+                                    </ResponsiveContainer>
+                                </div>
+
+                                {/* BOTTOM RIGHT: Average Liquidation Size */}
+                                <div className="border border-[#facc15]/30 bg-[#141810] p-4 relative glow-box flex flex-col min-h-0">
+                                    <div className="absolute top-4 left-4 z-10">
+                                        <p className="text-[10px] uppercase tracking-wider text-[#facc15] opacity-90 font-bold">AVERAGE PORTFOLIO LIQUIDATION SIZE - {denomination.toUpperCase()}</p>
+                                        <p className="text-[9px] opacity-60 mt-1">% OF TOKENS HELD SOLD DURING FIRST ACTION</p>
+                                    </div>
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <ComposedChart data={activeProbData} margin={{ top: 50, right: 10, left: -20, bottom: 20 }}>
+                                            <CartesianGrid strokeDasharray="3 4" stroke="#a4b596" opacity={0.1} />
+                                            <XAxis dataKey="pnl_bin" tick={{fontSize: 9, fill: '#a4b596'}} angle={-45} textAnchor="end" height={60} axisLine={false} tickLine={false} />
+                                            <YAxis domain={[0, 100]} tick={{fontSize: 9, fill: '#a4b596'}} axisLine={false} tickLine={false} tickFormatter={(v)=>v+'%'} />
+                                            <Tooltip contentStyle={{ backgroundColor: tbg, borderColor: 'rgba(250,204,21,0.5)', fontSize: '10px', color: '#a4b596' }} formatter={(val) => [val.toFixed(1) + '%']} />
+                                            <Legend wrapperStyle={{fontSize: '10px'}} verticalAlign="top" align="right" />
+                                            
+                                            <Area type="monotone" dataKey="first_partial_pct" tooltipType="none" legendType="none" fill="#3b82f6" fillOpacity={0.2} stroke="none" activeDot={false} />
+                                            <Line type="monotone" dataKey="first_partial_pct" name="Avg 1st Action Size" stroke="#3b82f6" strokeWidth={2} dot={{r: 3}} />
+                                        </ComposedChart>
+                                    </ResponsiveContainer>
+                                </div>
+                                
+                                {/* WIDE BOTTOM ROW: Exit Strategy */}
+                                <div className="col-span-2 border border-[#facc15]/30 bg-[#141810] p-4 relative glow-box flex flex-col min-h-[300px]">
+                                    <div className="absolute top-4 left-4 z-10">
+                                        <p className="text-[10px] uppercase tracking-wider text-[#facc15] opacity-90 font-bold">BEHAVIORAL EXIT STRATEGY BY ZONE - {denomination.toUpperCase()}</p>
+                                        <p className="text-[9px] opacity-60 mt-1">PROPORTION OF TOTAL DECISIONS (100% STACKED RATIO)</p>
+                                    </div>
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <BarChart data={activeProbData} margin={{ top: 50, right: 10, left: -20, bottom: 20 }}>
+                                            <CartesianGrid strokeDasharray="3 4" stroke="#a4b596" opacity={0.1} vertical={false} />
+                                            <XAxis dataKey="pnl_bin" tick={{fontSize: 9, fill: '#a4b596'}} angle={-45} textAnchor="end" height={60} axisLine={false} tickLine={false} />
+                                            <YAxis domain={[0, 100]} tick={{fontSize: 9, fill: '#a4b596'}} axisLine={false} tickLine={false} tickFormatter={(v)=>v+'%'} />
+                                            <Tooltip cursor={{fill: 'rgba(250, 204, 21, 0.05)'}} contentStyle={{ backgroundColor: tbg, borderColor: 'rgba(250,204,21,0.5)', fontSize: '10px', color: '#a4b596' }} itemStyle={{ color: '#d1e0c5' }} formatter={(val) => [val.toFixed(1) + '%']} />
+                                            <Legend wrapperStyle={{fontSize: '10px'}} verticalAlign="top" align="right" />
+                                            
+                                            <Bar dataKey="ratio_full" stackId="a" name="Full Exit (%)" fill="#f87171" opacity={0.9} />
+                                            <Bar dataKey="ratio_first" stackId="a" name="1st Action (%)" fill="#3b82f6" opacity={0.9} />
+                                        </BarChart>
+                                    </ResponsiveContainer>
+                                </div>
+
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const root = createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+
+</html>
